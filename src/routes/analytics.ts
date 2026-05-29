@@ -1,0 +1,194 @@
+import { Router, Response } from "express";
+import { requireAuth } from "../middleware/requireAuth";
+import { AuthRequest } from "../types";
+import { supabase } from "../lib/supabase";
+import { getTikTokVideos } from "../lib/tiktok";
+
+const router = Router();
+
+// POST /analytics/tiktok/sync — fetch latest posts from TikTok and store them
+router.post("/tiktok/sync", requireAuth, async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+
+  // Get user's TikTok access token
+  const { data: account, error: accountError } = await supabase
+    .from("social_accounts")
+    .select("*")
+    .eq("user_id", user.id)
+    .eq("platform", "tiktok")
+    .single();
+
+  if (accountError || !account) {
+    res.status(404).json({ error: "No TikTok account connected" });
+    return;
+  }
+
+  // Check token isn't expired
+  if (new Date(account.expires_at) < new Date()) {
+    res.status(401).json({ error: "TikTok token expired, please reconnect" });
+    return;
+  }
+
+  try {
+    const videos = await getTikTokVideos(account.access_token);
+
+    if (!videos || videos.length === 0) {
+      res.json({ message: "No videos found", synced: 0 });
+      return;
+    }
+
+    // Calculate engagement rate and upsert each video
+   type TikTokVideo = Awaited<ReturnType<typeof getTikTokVideos>>[number];
+const rows = videos.map((v: TikTokVideo) => {
+      const totalEngagements = v.like_count + v.comment_count + v.share_count;
+      const engagementRate =
+        v.view_count > 0
+          ? parseFloat(((totalEngagements / v.view_count) * 100).toFixed(2))
+          : 0;
+
+      return {
+        user_id: user.id,
+        post_id: v.id,
+        title: v.title,
+        cover_image_url: v.cover_image_url,
+        view_count: v.view_count,
+        like_count: v.like_count,
+        comment_count: v.comment_count,
+        share_count: v.share_count,
+        engagement_rate: engagementRate,
+        fetched_at: new Date().toISOString(),
+      };
+    });
+
+    const { error: upsertError } = await supabase
+      .from("tiktok_posts")
+      .upsert(rows, { onConflict: "user_id,post_id" });
+
+    if (upsertError) {
+      res.status(500).json({ error: upsertError.message });
+      return;
+    }
+
+    res.json({ message: "Synced successfully", synced: rows.length });
+  } catch (err: any) {
+    console.error("TikTok sync error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /analytics/tiktok — get stored analytics for logged in user
+router.get("/tiktok", requireAuth, async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+
+  const { data: posts, error } = await supabase
+    .from("tiktok_posts")
+    .select("*")
+    .eq("user_id", user.id)
+    .order("view_count", { ascending: false });
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  if (!posts || posts.length === 0) {
+    res.json({ analytics: null, message: "No data yet, sync first" });
+    return;
+  }
+
+  // Aggregate stats
+  const totalViews = posts.reduce((sum, p) => sum + Number(p.view_count), 0);
+  const totalLikes = posts.reduce((sum, p) => sum + Number(p.like_count), 0);
+  const totalComments = posts.reduce((sum, p) => sum + Number(p.comment_count), 0);
+  const totalShares = posts.reduce((sum, p) => sum + Number(p.share_count), 0);
+  const avgEngagementRate = parseFloat(
+    (
+      posts.reduce((sum, p) => sum + Number(p.engagement_rate), 0) /
+      posts.length
+    ).toFixed(2)
+  );
+
+  res.json({
+    analytics: {
+      summary: {
+        total_posts: posts.length,
+        total_views: totalViews,
+        total_likes: totalLikes,
+        total_comments: totalComments,
+        total_shares: totalShares,
+        avg_engagement_rate: avgEngagementRate,
+      },
+      posts,
+    },
+  });
+});
+
+// GET /analytics/top-creators — ranked list of all creators by engagement
+router.get("/top-creators", async (_req, res: Response) => {
+  const { data, error } = await supabase
+    .from("tiktok_posts")
+    .select(`
+      user_id,
+      users (
+        name,
+        avatar
+      ),
+      social_accounts!inner (
+        username,
+        platform
+      )
+    `)
+    .eq("social_accounts.platform", "tiktok");
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  // Group by user and calculate totals
+  const creatorMap = new Map<string, any>();
+
+  for (const row of data as any[]) {
+    const uid = row.user_id;
+    if (!creatorMap.has(uid)) {
+      creatorMap.set(uid, {
+        user_id: uid,
+        name: row.users?.name,
+        avatar: row.users?.avatar,
+        username: row.social_accounts?.username,
+        total_views: 0,
+        total_likes: 0,
+        total_comments: 0,
+        total_shares: 0,
+        post_count: 0,
+        engagement_rates: [] as number[],
+      });
+    }
+
+    const creator = creatorMap.get(uid);
+    creator.total_views += Number(row.view_count || 0);
+    creator.total_likes += Number(row.like_count || 0);
+    creator.total_comments += Number(row.comment_count || 0);
+    creator.total_shares += Number(row.share_count || 0);
+    creator.post_count += 1;
+    creator.engagement_rates.push(Number(row.engagement_rate || 0));
+  }
+
+  // Calculate avg engagement rate and rank
+  const creators = Array.from(creatorMap.values())
+    .map((c) => ({
+      ...c,
+      avg_engagement_rate: parseFloat(
+        (
+          c.engagement_rates.reduce((s: number, r: number) => s + r, 0) /
+          c.engagement_rates.length
+        ).toFixed(2)
+      ),
+      engagement_rates: undefined,
+    }))
+    .sort((a, b) => b.avg_engagement_rate - a.avg_engagement_rate);
+
+  res.json({ creators });
+});
+
+export default router;

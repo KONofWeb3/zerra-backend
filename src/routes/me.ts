@@ -5,7 +5,7 @@ import { supabase } from "../lib/supabase";
 
 const router = Router();
 
-// GET /me — returns the current logged in user
+// GET /me
 router.get("/", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;
 
@@ -21,6 +21,42 @@ router.get("/", requireAuth, async (req, res: Response) => {
   }
 
   res.json({ user: data });
+});
+
+// GET /me/social-accounts
+router.get("/social-accounts", requireAuth, async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+
+  const { data, error } = await supabase
+    .from("social_accounts")
+    .select("id, platform, username, expires_at, created_at")
+    .eq("user_id", user.id);
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  res.json({ accounts: data });
+});
+
+// DELETE /me/social-accounts/:id
+router.delete("/social-accounts/:id", requireAuth, async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+  const { id } = req.params;
+
+  const { error } = await supabase
+    .from("social_accounts")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", user.id);
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  res.json({ success: true });
 });
 
 export default router;

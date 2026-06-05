@@ -13,13 +13,13 @@ const router = Router();
 
 // GET /auth/tiktok — redirect user to TikTok login
 router.get("/tiktok", requireAuth, (req: Request, res: Response) => {
-  const user = (req as AuthRequest).user;
-  // Encode the token in state so we can retrieve it on callback
-  const state = Buffer.from(JSON.stringify({
-    token: req.query.token as string,
-    nonce: crypto.randomBytes(8).toString("hex"),
-  })).toString("base64");
-  
+  const state = Buffer.from(
+    JSON.stringify({
+      token: req.query.token as string,
+      nonce: crypto.randomBytes(8).toString("hex"),
+    })
+  ).toString("base64");
+
   const url = getTikTokAuthUrl(state);
   res.redirect(url);
 });
@@ -35,7 +35,9 @@ router.get("/tiktok/callback", async (req: Request, res: Response) => {
 
   try {
     // Decode token from state
-    const decoded = JSON.parse(Buffer.from(state as string, "base64").toString());
+    const decoded = JSON.parse(
+      Buffer.from(state as string, "base64").toString()
+    );
     const token = decoded.token;
 
     if (!token) {
@@ -43,7 +45,7 @@ router.get("/tiktok/callback", async (req: Request, res: Response) => {
       return;
     }
 
-    // Verify the token
+    // Verify the Supabase token
     const { data, error: authError } = await supabase.auth.getUser(token);
     if (authError || !data.user) {
       res.redirect(`${process.env.FRONTEND_URL}/settings?error=tiktok_failed`);
@@ -54,20 +56,33 @@ router.get("/tiktok/callback", async (req: Request, res: Response) => {
 
     // Exchange code for tokens
     const tokens = await exchangeTikTokCode(code as string);
-    const tiktokUser = await getTikTokUser(tokens.access_token);
+
+    // In sandbox, user info fetch may fail — use open_id as fallback
+    let username = `tiktok_${tokens.open_id.slice(0, 8)}`;
+    try {
+      const tiktokUser = await getTikTokUser(tokens.access_token);
+      username = tiktokUser.username || tiktokUser.display_name || username;
+    } catch {
+      console.warn("Could not fetch TikTok user info, using open_id fallback");
+    }
 
     // Save to social_accounts
     const { error: dbError } = await supabase
       .from("social_accounts")
-      .upsert({
-        user_id: user.id,
-        platform: "tiktok",
-        platform_user_id: tokens.open_id,
-        username: tiktokUser.username || tiktokUser.display_name,
-        access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token,
-        expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
-      }, { onConflict: "user_id,platform" });
+      .upsert(
+        {
+          user_id: user.id,
+          platform: "tiktok",
+          platform_user_id: tokens.open_id,
+          username,
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token,
+          expires_at: new Date(
+            Date.now() + tokens.expires_in * 1000
+          ).toISOString(),
+        },
+        { onConflict: "user_id,platform" }
+      );
 
     if (dbError) throw dbError;
 
@@ -77,4 +92,5 @@ router.get("/tiktok/callback", async (req: Request, res: Response) => {
     res.redirect(`${process.env.FRONTEND_URL}/settings?error=tiktok_failed`);
   }
 });
+
 export default router;

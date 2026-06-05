@@ -13,29 +13,50 @@ const router = Router();
 
 // GET /auth/tiktok — redirect user to TikTok login
 router.get("/tiktok", requireAuth, (req: Request, res: Response) => {
-  const state = crypto.randomBytes(16).toString("hex");
+  const user = (req as AuthRequest).user;
+  // Encode the token in state so we can retrieve it on callback
+  const state = Buffer.from(JSON.stringify({
+    token: req.query.token as string,
+    nonce: crypto.randomBytes(8).toString("hex"),
+  })).toString("base64");
+  
   const url = getTikTokAuthUrl(state);
   res.redirect(url);
 });
 
-// GET /auth/tiktok/callback — TikTok redirects here after login
-router.get("/tiktok/callback", requireAuth, async (req: Request, res: Response) => {
-  const { code, error } = req.query;
+// GET /auth/tiktok/callback
+router.get("/tiktok/callback", async (req: Request, res: Response) => {
+  const { code, error, state } = req.query;
 
-  if (error || !code) {
+  if (error || !code || !state) {
     res.redirect(`${process.env.FRONTEND_URL}/settings?error=tiktok_denied`);
     return;
   }
 
   try {
-    const user = (req as AuthRequest).user;
+    // Decode token from state
+    const decoded = JSON.parse(Buffer.from(state as string, "base64").toString());
+    const token = decoded.token;
+
+    if (!token) {
+      res.redirect(`${process.env.FRONTEND_URL}/settings?error=tiktok_failed`);
+      return;
+    }
+
+    // Verify the token
+    const { data, error: authError } = await supabase.auth.getUser(token);
+    if (authError || !data.user) {
+      res.redirect(`${process.env.FRONTEND_URL}/settings?error=tiktok_failed`);
+      return;
+    }
+
+    const user = data.user;
 
     // Exchange code for tokens
     const tokens = await exchangeTikTokCode(code as string);
+    const tiktokUser = await getTikTokUser(tokens.access_token);
 
-    // Get TikTok user profile
- const tiktokUser = await getTikTokUser(tokens.access_token);
-    // Save to social_accounts table
+    // Save to social_accounts
     const { error: dbError } = await supabase
       .from("social_accounts")
       .upsert({
@@ -45,9 +66,7 @@ router.get("/tiktok/callback", requireAuth, async (req: Request, res: Response) 
         username: tiktokUser.username || tiktokUser.display_name,
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
-        expires_at: new Date(
-          Date.now() + tokens.expires_in * 1000
-        ).toISOString(),
+        expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
       }, { onConflict: "user_id,platform" });
 
     if (dbError) throw dbError;
@@ -58,5 +77,4 @@ router.get("/tiktok/callback", requireAuth, async (req: Request, res: Response) 
     res.redirect(`${process.env.FRONTEND_URL}/settings?error=tiktok_failed`);
   }
 });
-
 export default router;

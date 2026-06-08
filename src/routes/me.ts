@@ -169,4 +169,28 @@ router.put("/password", requireAuth, async (req, res: Response) => {
   res.json({ success: true });
 });
 
+// PUT /me/wallet — save wallet address
+router.put("/wallet", requireAuth, async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+  const { wallet_address, wallet_chain } = req.body;
+
+  if (!wallet_address) {
+    res.status(400).json({ error: "Wallet address is required" });
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("users")
+    .update({ wallet_address, wallet_chain: wallet_chain ?? "ethereum" })
+    .eq("id", user.id)
+    .select()
+    .single();
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  res.json({ user: data });
+});
 export default router;

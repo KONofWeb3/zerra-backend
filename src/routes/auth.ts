@@ -25,7 +25,7 @@ router.get("/tiktok", requireAuth, (req: Request, res: Response) => {
 });
 
 // GET /auth/tiktok/callback
-router.get("/tiktok/callback", async (req: Request, res: Response) => {
+router.get("/tt/callback", async (req: Request, res: Response) => {
   const { code, error, state } = req.query;
 
   if (error || !code || !state) {

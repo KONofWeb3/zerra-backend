@@ -77,7 +77,7 @@ export async function getTikTokUser(accessToken: string): Promise<{
   console.log("TikTok user response status:", res.status);
   console.log("TikTok user response body:", JSON.stringify(data));
 
-  if (!res.ok || data.error) {
+ if (!res.ok || (data.error && data.error.code !== "ok")) {
     throw new Error(data.error?.message || "Failed to fetch TikTok user");
   }
   return data.data.user;
@@ -124,7 +124,7 @@ export async function getTikTokVideos(accessToken: string): Promise<
   console.log("TikTok videos response status:", res.status);
   console.log("TikTok videos response body:", JSON.stringify(data));
 
-  if (!res.ok || data.error) {
+ if (!res.ok || (data.error && data.error.code !== "ok")) {
     throw new Error(data.error?.message || "Failed to fetch TikTok videos");
   }
   return data.data?.videos ?? [];

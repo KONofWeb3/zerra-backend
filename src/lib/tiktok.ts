@@ -121,11 +121,9 @@ export async function getTikTokVideos(accessToken: string): Promise<
     }
   );
 
-  const data = (await res.json()) as TikTokVideoResponse;
-
-  if (!res.ok || data.error) {
-    throw new Error(data.error?.message || "Failed to fetch TikTok videos");
-  }
-
-  return data.data.videos;
+const data = (await res.json()) as TikTokVideoResponse;
+if (!res.ok || data.error) {
+  throw new Error(data.error?.message || "Failed to fetch TikTok videos");
+}
+return data.data?.videos ?? [];
 }

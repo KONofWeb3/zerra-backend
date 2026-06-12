@@ -1,9 +1,9 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-export const TIKTOK_CLIENT_KEY = process.env.TIKTOK_CLIENT_KEY!;
+export const TIKTOK_CLIENT_KEY    = process.env.TIKTOK_CLIENT_KEY!;
 export const TIKTOK_CLIENT_SECRET = process.env.TIKTOK_CLIENT_SECRET!;
-export const TIKTOK_REDIRECT_URI = process.env.TIKTOK_REDIRECT_URI!;
+export const TIKTOK_REDIRECT_URI  = process.env.TIKTOK_REDIRECT_URI!;
 
 interface TikTokTokenResponse {
   access_token: string;
@@ -25,6 +25,7 @@ interface TikTokUserResponse {
   };
   error?: {
     message: string;
+    code?: string;
   };
 }
 
@@ -36,7 +37,6 @@ export function getTikTokAuthUrl(state: string): string {
     redirect_uri: TIKTOK_REDIRECT_URI,
     state,
   });
-
   return `https://www.tiktok.com/v2/auth/authorize?${params.toString()}`;
 }
 
@@ -54,11 +54,9 @@ export async function exchangeTikTokCode(code: string): Promise<TikTokTokenRespo
   });
 
   const data = await res.json() as TikTokTokenResponse;
-
   if (!res.ok || data.error) {
     throw new Error(data.error_description || "TikTok token exchange failed");
   }
-
   return data;
 }
 
@@ -69,22 +67,22 @@ export async function getTikTokUser(accessToken: string): Promise<{
   avatar_url: string;
 }> {
   const res = await fetch(
-    `https://open.tiktokapis.com/v2/user/info/?fields=open_id,username,display_name,avatar_url`,
+    "https://open.tiktokapis.com/v2/user/info/?fields=open_id,username,display_name,avatar_url",
     {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
+      headers: { Authorization: `Bearer ${accessToken}` },
     }
   );
 
   const data = await res.json() as TikTokUserResponse;
+  console.log("TikTok user response status:", res.status);
+  console.log("TikTok user response body:", JSON.stringify(data));
 
   if (!res.ok || data.error) {
     throw new Error(data.error?.message || "Failed to fetch TikTok user");
   }
-
   return data.data.user;
 }
+
 interface TikTokVideoResponse {
   data: {
     videos: {
@@ -103,6 +101,7 @@ interface TikTokVideoResponse {
   };
   error?: {
     message: string;
+    code?: string;
   };
 }
 
@@ -121,9 +120,12 @@ export async function getTikTokVideos(accessToken: string): Promise<
     }
   );
 
-const data = (await res.json()) as TikTokVideoResponse;
-if (!res.ok || data.error) {
-  throw new Error(data.error?.message || "Failed to fetch TikTok videos");
-}
-return data.data?.videos ?? [];
+  const data = (await res.json()) as TikTokVideoResponse;
+  console.log("TikTok videos response status:", res.status);
+  console.log("TikTok videos response body:", JSON.stringify(data));
+
+  if (!res.ok || data.error) {
+    throw new Error(data.error?.message || "Failed to fetch TikTok videos");
+  }
+  return data.data?.videos ?? [];
 }

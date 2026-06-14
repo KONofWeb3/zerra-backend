@@ -193,4 +193,24 @@ router.put("/wallet", requireAuth, async (req, res: Response) => {
 
   res.json({ user: data });
 });
+
+// DELETE /me/wallet — remove wallet address
+router.delete("/wallet", requireAuth, async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+
+  const { data, error } = await supabase
+    .from("users")
+    .update({ wallet_address: null, wallet_chain: null })
+    .eq("id", user.id)
+    .select()
+    .single();
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  res.json({ user: data });
+});
+
 export default router;

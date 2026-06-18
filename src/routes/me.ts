@@ -183,6 +183,48 @@ router.get("/tiktok-status", requireAuth, async (req, res: Response) => {
 
   res.json({ connected: !!data });
 });
+
+// Add to src/routes/me.ts before export default router
+
+// GET /me/joined-campaigns — IDs of campaigns this user has joined
+router.get("/joined-campaigns", requireAuth, async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+
+  const { data } = await supabase
+    .from("claims")
+    .select("bounty_id")
+    .eq("user_id", user.id);
+
+  res.json({ joinedIds: (data ?? []).map((r) => r.bounty_id) });
+});
+
+// GET /me/campaigns — full campaign objects this user has joined (for dashboard)
+router.get("/campaigns", requireAuth, async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+
+  const { data: claims } = await supabase
+    .from("claims")
+    .select("bounty_id, status, created_at")
+    .eq("user_id", user.id);
+
+  if (!claims?.length) { res.json({ campaigns: [] }); return; }
+
+  const bountyIds = claims.map((c) => c.bounty_id);
+  const { data: bounties } = await supabase
+    .from("bounties")
+    .select("id, project_name, description, cover_image_url, token_icon, reward_usdc, status, required_hashtags")
+    .in("id", bountyIds);
+
+  // Merge claim status into each bounty
+  const claimMap = new Map(claims.map((c) => [c.bounty_id, c]));
+  const campaigns = (bounties ?? []).map((b) => ({
+    ...b,
+    claim_status: claimMap.get(b.id)?.status ?? "pending",
+    joined_at:    claimMap.get(b.id)?.created_at,
+  }));
+
+  res.json({ campaigns });
+});
 // PUT /me/wallet — save wallet address
 router.put("/wallet", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;

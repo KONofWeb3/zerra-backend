@@ -1,8 +1,17 @@
 // src/lib/ai/transcribeVideo.ts
 import { createClient } from "@deepgram/sdk";
 import ffmpeg from "fluent-ffmpeg";
+import ffmpegPath from "ffmpeg-static";
 import fs from "fs";
 import https from "https";
+
+// Point fluent-ffmpeg at the static binary downloaded by the ffmpeg-static
+// package during npm install — required since Render's build environment
+// has a read-only filesystem and can't run `apt-get install ffmpeg`.
+if (!ffmpegPath) {
+  throw new Error("ffmpeg-static could not resolve a binary path for this platform");
+}
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY!);
 

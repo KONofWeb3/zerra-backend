@@ -4,10 +4,12 @@ import { AuthRequest } from "../types";
 import { supabase } from "../lib/supabase";
 import { getTikTokVideos } from "../lib/tiktok";
 import { inngest } from "../inngest/client";
+import { matchCampaigns } from "../lib/ai/matchCampaigns";
 
 const router = Router();
 
-// POST /analytics/tiktok/sync — fetch latest posts, save immediately, fire AI verification jobs
+// POST /analytics/tiktok/sync — fetch videos, save all to dashboard,
+// but only queue AI verification for videos matching an active campaign
 router.post("/tiktok/sync", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;
 
@@ -32,7 +34,7 @@ router.post("/tiktok/sync", requireAuth, async (req, res: Response) => {
     const videos = await getTikTokVideos(account.access_token);
 
     if (!videos || videos.length === 0) {
-      res.json({ message: "No videos found", synced: 0 });
+      res.json({ message: "No videos found", synced: 0, campaignMatches: 0 });
       return;
     }
 
@@ -58,7 +60,8 @@ router.post("/tiktok/sync", requireAuth, async (req, res: Response) => {
       };
     });
 
-    // Save videos to dashboard immediately — creator sees them right away
+    // Save ALL videos to dashboard — creator's own analytics page shows everything,
+    // campaign matching only gates AI verification + leaderboard eligibility
     const { error: upsertError } = await supabase
       .from("tiktok_posts")
       .upsert(rows, { onConflict: "user_id,post_id" });
@@ -68,31 +71,45 @@ router.post("/tiktok/sync", requireAuth, async (req, res: Response) => {
       return;
     }
 
-    // Fire background AI verification job for each video
-    // (Currently fires for ALL synced videos — add a campaign-tag filter here
-    //  once campaign tagging exists, matching the spec's `isCampaignTagged` check)
-    await Promise.all(
-      videos.map((v: TikTokVideo) =>
-        inngest.send({
+    // Filter: only fire AI verification for videos that match an active campaign's
+    // hashtags/keywords. This is the key fix — previously every video got analyzed
+    // regardless of campaign relevance.
+    let totalJobsFired = 0;
+
+    for (const v of videos as TikTokVideo[]) {
+      const caption = v.video_description || v.title || "";
+      const matches = await matchCampaigns(caption);
+
+      if (matches.length === 0) continue; // no campaign relevance — skip AI analysis entirely
+
+      // Fire one job PER matched campaign (a video can count toward multiple campaigns)
+      for (const match of matches) {
+        await inngest.send({
           name: "video/synced",
           data: {
             videoId: v.id,
             creatorId: user.id,
-            campaignId: null, // wire up once campaign association exists
+            campaignId: match.campaignId,
             videoUrl: v.embed_link,
-            caption: v.video_description || v.title || "",
+            caption,
             creatorHandle: account.username ?? "unknown",
-            campaignName: "General", // placeholder until campaign tagging exists
+            campaignName: match.campaignName,
+            requiredKeywords: match.requiredKeywords,
             likes: v.like_count,
             views: v.view_count,
             comments: v.comment_count,
             shares: v.share_count,
           },
-        })
-      )
-    );
+        });
+        totalJobsFired++;
+      }
+    }
 
-    res.json({ message: "Synced successfully", synced: rows.length, verifying: videos.length });
+    res.json({
+      message: "Synced successfully",
+      synced: rows.length,
+      campaignMatches: totalJobsFired,
+    });
   } catch (err: any) {
     console.error("TikTok sync error:", err.message);
     res.status(500).json({ error: err.message });
@@ -227,6 +244,37 @@ router.get("/top-creators", async (_req, res: Response) => {
     });
 
   res.json({ creators });
+});
+
+// GET /analytics/campaigns/:campaignId/my-posts — creator's verified posts for ONE campaign
+router.get("/campaigns/:campaignId/my-posts", requireAuth, async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+  const { campaignId } = req.params;
+
+  const { data: analyses, error } = await supabase
+    .from("video_analysis")
+    .select(`
+      *,
+      tiktok_posts:video_id ( title, cover_image_url, view_count, like_count, comment_count, share_count )
+    `)
+    .eq("creator_id", user.id)
+    .eq("campaign_id", campaignId)
+    .order("final_score", { ascending: false });
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  if (!analyses || analyses.length === 0) {
+    res.json({
+      posts: [],
+      message: "You don't have any posts related to this campaign yet. Post content with the required hashtag or keyword, then sync your TikTok again.",
+    });
+    return;
+  }
+
+  res.json({ posts: analyses });
 });
 
 export default router;

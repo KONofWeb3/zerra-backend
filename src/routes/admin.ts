@@ -86,11 +86,16 @@ router.post("/campaigns", async (req, res: Response) => {
         return;
       }
 
-      // Set role = 'project' on the new user row
+      // Upsert the users row with role = 'project'.
+      // Using upsert (not update) because Supabase's auth trigger that creates the
+      // users row may not have fired yet at this point — upsert ensures it exists
+      // regardless of trigger timing.
       await supabase
         .from("users")
-        .update({ role: "project", name: projectName })
-        .eq("id", authUser.user.id);
+        .upsert(
+          { id: authUser.user.id, email: projectContactEmail, name: projectName, role: "project" },
+          { onConflict: "id" }
+        );
 
       // Create the project record
       const { data: project, error: projectError } = await supabase

@@ -9,6 +9,7 @@ import authRouter from "./routes/auth";
 import bountiesRouter from "./routes/bounties";
 import portfolioRouter from "./routes/portfolio";
 import analyticsRouter from "./routes/analytics";
+import adminRouter from "./routes/admin";
 import { inngest } from "./inngest/client";
 import { analyzeVideoJob } from "./inngest/functions/analyzeVideo";
 
@@ -41,20 +42,21 @@ app.use("/auth", authRouter);
 app.use("/bounties", bountiesRouter);
 app.use("/portfolio", portfolioRouter);
 app.use("/analytics", analyticsRouter);
+app.use("/admin", adminRouter);
 
 async function startServer() {
   const { error } = await supabase.from("users").select("id").limit(1);
 
   if (error) {
-    console.error(" Supabase connection failed:", error.message);
+    console.error("❌ Supabase connection failed:", error.message);
     process.exit(1);
   }
 
-  console.log("Supabase connected");
+  console.log("✅ Supabase connected");
 
   app.listen(PORT, () => {
-    console.log(` Zerra backend running on port ${PORT}`);
-    console.log(` Inngest endpoint live at /api/inngest`);
+    console.log(`🚀 Zerra backend running on port ${PORT}`);
+    console.log(`⚡ Inngest endpoint live at /api/inngest`);
   });
 }
 

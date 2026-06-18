@@ -169,6 +169,20 @@ router.put("/password", requireAuth, async (req, res: Response) => {
   res.json({ success: true });
 });
 
+// Add this route to src/routes/me.ts
+// GET /me/tiktok-status — quick check if the user has TikTok connected
+router.get("/tiktok-status", requireAuth, async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+
+  const { data } = await supabase
+    .from("social_accounts")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("platform", "tiktok")
+    .single();
+
+  res.json({ connected: !!data });
+});
 // PUT /me/wallet — save wallet address
 router.put("/wallet", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;

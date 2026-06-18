@@ -70,6 +70,52 @@ router.post("/:id/claim", requireAuth, async (req: Request, res: Response) => {
     return;
   }
 
+  // Add this route to src/routes/bounties.ts
+// POST /bounties/:id/join — creator joins a campaign (creates a claim record)
+router.post("/:id/join", requireAuth, async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+  const { id } = req.params;
+
+  // Check TikTok is connected
+  const { data: account } = await supabase
+    .from("social_accounts")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("platform", "tiktok")
+    .single();
+
+  if (!account) {
+    res.status(400).json({ error: "Connect your TikTok account before joining a campaign" });
+    return;
+  }
+
+  // Check campaign exists and is active
+  const { data: bounty } = await supabase
+    .from("bounties")
+    .select("id, status")
+    .eq("id", id)
+    .single();
+
+  if (!bounty || bounty.status !== "active") {
+    res.status(400).json({ error: "Campaign is not currently active" });
+    return;
+  }
+
+  // Upsert the claim (idempotent — joining twice is fine)
+  const { error } = await supabase
+    .from("claims")
+    .upsert(
+      { user_id: user.id, bounty_id: id, status: "pending" },
+      { onConflict: "user_id,bounty_id" }
+    );
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  res.json({ success: true });
+});
   // Create the claim
   const { data: claim, error: claimError } = await supabase
     .from("claims")

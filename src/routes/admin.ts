@@ -52,6 +52,8 @@ router.post("/campaigns", async (req, res: Response) => {
     totalBudgetUsdc,
     startsAt,
     endsAt,
+    coverImageUrl,
+    tokenIconUrl,
   } = req.body;
 
   if (!campaignTitle || !requiredHashtags?.length) {
@@ -121,7 +123,7 @@ router.post("/campaigns", async (req, res: Response) => {
       .from("bounties")
       .insert({
         project_id: projectId,
-        project_name: projectName, // denormalized for quick display
+        project_name: projectName,
         description,
         required_hashtags: requiredHashtags,
         required_keywords: requiredKeywords ?? [],
@@ -129,8 +131,10 @@ router.post("/campaigns", async (req, res: Response) => {
         total_budget_usdc: totalBudgetUsdc,
         starts_at: startsAt ?? null,
         ends_at: endsAt ?? null,
-        status: "draft", // admin must explicitly activate it
+        status: "draft",
         created_by: admin.id,
+        cover_image_url: coverImageUrl ?? null,
+        token_icon: tokenIconUrl ?? null,
       })
       .select()
       .single();

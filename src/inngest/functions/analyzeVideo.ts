@@ -5,20 +5,8 @@ import { transcribeVideo } from "../../lib/ai/transcribeVideo";
 import { calculateFinalScore, calculateFallbackScore } from "../../lib/ai/calculateScore";
 import { supabase } from "../../lib/supabase";
 
-interface VideoSyncedEvent {
-  videoId: string;
-  creatorId: string;
-  campaignId: string | null;
-  videoUrl: string;       // embed_link from TikTok video.list
-  caption: string;
-  creatorHandle: string;
-  campaignName: string;
-  likes: number;
-  views: number;
-  comments: number;
-  shares: number;
-}
-
+// Event shape is now defined centrally in client.ts via EventSchemas,
+// so `event.data` below is fully typed automatically — no casting needed.
 export const analyzeVideoJob = inngest.createFunction(
   { id: "analyze-video", retries: 1 },
   { event: "video/synced" },
@@ -26,9 +14,8 @@ export const analyzeVideoJob = inngest.createFunction(
     const {
       videoId, creatorId, campaignId, videoUrl, caption,
       creatorHandle, campaignName, likes, views, comments, shares,
-    } = event.data as VideoSyncedEvent;
+    } = event.data;
 
-    // Mark as processing
     await step.run("mark-processing", async () => {
       await supabase.from("video_analysis").upsert(
         { video_id: videoId, creator_id: creatorId, campaign_id: campaignId, status: "processing" },
@@ -36,12 +23,10 @@ export const analyzeVideoJob = inngest.createFunction(
       );
     });
 
-    // Step 1: Analyze caption immediately — fastest signal, no audio needed
     const captionResult = await step.run("analyze-caption", async () => {
       return await analyzeCaptionWithRetry(caption, campaignName, creatorHandle);
     });
 
-    // If caption analysis failed even after retry, flag for pending review and stop
     if (!captionResult) {
       await step.run("flag-pending-review", async () => {
         await supabase.from("video_analysis").upsert(
@@ -58,7 +43,6 @@ export const analyzeVideoJob = inngest.createFunction(
       return { success: false, videoId, reason: "caption_analysis_failed" };
     }
 
-    // Step 2: Transcribe video audio — skip gracefully if video URL unavailable
     let transcript: string | null = null;
     let transcriptionFailed = false;
 
@@ -71,7 +55,6 @@ export const analyzeVideoJob = inngest.createFunction(
       transcriptionFailed = true;
     }
 
-    // If transcription failed, use fallback scoring (caption only, 0.7 multiplier)
     if (transcriptionFailed || !transcript) {
       const scores = calculateFallbackScore({
         captionScore: captionResult.authenticity_score,
@@ -107,12 +90,10 @@ export const analyzeVideoJob = inngest.createFunction(
       return { success: true, videoId, finalScore: scores.finalScore, fallback: true };
     }
 
-    // Step 3: Analyze transcript
     const transcriptResult = await step.run("analyze-transcript", async () => {
       return await analyzeCaptionWithRetry(transcript!, campaignName, creatorHandle);
     });
 
-    // If transcript analysis failed, fall back to caption-only scoring
     if (!transcriptResult) {
       const scores = calculateFallbackScore({
         captionScore: captionResult.authenticity_score,
@@ -142,17 +123,14 @@ export const analyzeVideoJob = inngest.createFunction(
       return { success: true, videoId, finalScore: scores.finalScore, fallback: true };
     }
 
-    // Step 4: Calculate final score with all signals
     const scores = calculateFinalScore({
       captionScore: captionResult.authenticity_score,
       transcriptScore: transcriptResult.authenticity_score,
       likes, views, comments, shares,
     });
 
-    // Bot detection quarantine — extreme ratios get held for manual review
-    const isQuarantined = scores.engagementScore === 20; // matches the suspicious-ratio branch in calculateScore
+    const isQuarantined = scores.engagementScore === 20;
 
-    // Step 5: Save full analysis
     await step.run("save-analysis", async () => {
       await supabase.from("video_analysis").upsert(
         {
@@ -172,7 +150,6 @@ export const analyzeVideoJob = inngest.createFunction(
       );
     });
 
-    // Step 6: Update leaderboard — only if eligible and not quarantined
     if (scores.leaderboardEligible && !isQuarantined) {
       await step.run("update-leaderboard", async () => {
         await updateLeaderboard(creatorId, campaignId, scores.finalScore);
@@ -188,7 +165,6 @@ async function updateLeaderboard(
   campaignId: string | null,
   scoreIncrement: number
 ) {
-  // Fetch existing total to increment (Supabase doesn't have atomic increment via upsert directly)
   const { data: existing } = await supabase
     .from("leaderboard")
     .select("total_score")

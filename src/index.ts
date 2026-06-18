@@ -10,6 +10,7 @@ import bountiesRouter from "./routes/bounties";
 import portfolioRouter from "./routes/portfolio";
 import analyticsRouter from "./routes/analytics";
 import adminRouter from "./routes/admin";
+import projectRouter from "./routes/project";
 import { inngest } from "./inngest/client";
 import { analyzeVideoJob } from "./inngest/functions/analyzeVideo";
 
@@ -43,6 +44,7 @@ app.use("/bounties", bountiesRouter);
 app.use("/portfolio", portfolioRouter);
 app.use("/analytics", analyticsRouter);
 app.use("/admin", adminRouter);
+app.use("/project", projectRouter);
 
 async function startServer() {
   const { error } = await supabase.from("users").select("id").limit(1);

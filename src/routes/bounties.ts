@@ -5,12 +5,12 @@ import { supabase } from "../lib/supabase";
 
 const router = Router();
 
-// GET /bounties — list all live bounties
+// GET /bounties — list all active campaigns (status = 'active')
 router.get("/", async (_req: Request, res: Response) => {
-  const { data, error } = await supabase
+  const { data: campaigns, error } = await supabase
     .from("bounties")
     .select("*")
-    .eq("status", "live")
+    .eq("status", "active")
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -18,10 +18,27 @@ router.get("/", async (_req: Request, res: Response) => {
     return;
   }
 
-  res.json({ bounties: data });
+  // Attach participant counts per campaign
+  const ids = (campaigns ?? []).map((c) => c.id);
+  const { data: claims } = await supabase
+    .from("claims")
+    .select("bounty_id, user_id")
+    .in("bounty_id", ids);
+
+  const statsMap = new Map<string, number>();
+  for (const claim of claims ?? []) {
+    statsMap.set(claim.bounty_id, (statsMap.get(claim.bounty_id) ?? 0) + 1);
+  }
+
+  const enriched = (campaigns ?? []).map((c) => ({
+    ...c,
+    stats: { participantCount: statsMap.get(c.id) ?? 0 },
+  }));
+
+  res.json({ campaigns: enriched });
 });
 
-// GET /bounties/:id — single bounty
+// GET /bounties/:id — single campaign
 router.get("/:id", async (req: Request, res: Response) => {
   const { id } = req.params;
 
@@ -32,51 +49,19 @@ router.get("/:id", async (req: Request, res: Response) => {
     .single();
 
   if (error) {
-    res.status(404).json({ error: "Bounty not found" });
+    res.status(404).json({ error: "Campaign not found" });
     return;
   }
 
   res.json({ bounty: data });
 });
 
-// POST /bounties/:id/claim — creator claims a bounty
-router.post("/:id/claim", requireAuth, async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const user = (req as AuthRequest).user;
-
-  // Check bounty exists and is live
-  const { data: bounty, error: bountyError } = await supabase
-    .from("bounties")
-    .select("*")
-    .eq("id", id)
-    .eq("status", "live")
-    .single();
-
-  if (bountyError || !bounty) {
-    res.status(404).json({ error: "Bounty not found or no longer live" });
-    return;
-  }
-
-  // Check user hasn't already claimed this bounty
-  const { data: existing } = await supabase
-    .from("claims")
-    .select("id")
-    .eq("user_id", user.id)
-    .eq("bounty_id", id)
-    .single();
-
-  if (existing) {
-    res.status(409).json({ error: "You have already claimed this bounty" });
-    return;
-  }
-
-  // Add this route to src/routes/bounties.ts
-// POST /bounties/:id/join — creator joins a campaign (creates a claim record)
-router.post("/:id/join", requireAuth, async (req, res: Response) => {
+// POST /bounties/:id/join — creator joins a campaign
+router.post("/:id/join", requireAuth, async (req: Request, res: Response) => {
   const user = (req as AuthRequest).user;
   const { id } = req.params;
 
-  // Check TikTok is connected
+  // Must have TikTok connected
   const { data: account } = await supabase
     .from("social_accounts")
     .select("id")
@@ -89,7 +74,7 @@ router.post("/:id/join", requireAuth, async (req, res: Response) => {
     return;
   }
 
-  // Check campaign exists and is active
+  // Campaign must be active
   const { data: bounty } = await supabase
     .from("bounties")
     .select("id, status")
@@ -101,7 +86,7 @@ router.post("/:id/join", requireAuth, async (req, res: Response) => {
     return;
   }
 
-  // Upsert the claim (idempotent — joining twice is fine)
+  // Upsert — joining twice is idempotent
   const { error } = await supabase
     .from("claims")
     .upsert(
@@ -116,14 +101,39 @@ router.post("/:id/join", requireAuth, async (req, res: Response) => {
 
   res.json({ success: true });
 });
-  // Create the claim
+
+// POST /bounties/:id/claim — legacy claim endpoint (kept for backwards compat)
+router.post("/:id/claim", requireAuth, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const user = (req as AuthRequest).user;
+
+  const { data: bounty, error: bountyError } = await supabase
+    .from("bounties")
+    .select("*")
+    .eq("id", id)
+    .eq("status", "active")
+    .single();
+
+  if (bountyError || !bounty) {
+    res.status(404).json({ error: "Campaign not found or not active" });
+    return;
+  }
+
+  const { data: existing } = await supabase
+    .from("claims")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("bounty_id", id)
+    .single();
+
+  if (existing) {
+    res.status(409).json({ error: "You have already claimed this bounty" });
+    return;
+  }
+
   const { data: claim, error: claimError } = await supabase
     .from("claims")
-    .insert({
-      user_id: user.id,
-      bounty_id: id,
-      status: "pending",
-    })
+    .insert({ user_id: user.id, bounty_id: id, status: "pending" })
     .select()
     .single();
 

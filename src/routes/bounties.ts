@@ -97,6 +97,82 @@ router.post("/:id/join", requireAuth, async (req: Request, res: Response) => {
   res.json({ success: true });
 });
 
+// Add to src/routes/bounties.ts (or a new leaderboard.ts router, mounted at /leaderboard)
+
+// GET /leaderboard — global leaderboard, summed across all campaigns per creator
+router.get("/leaderboard", async (_req: Request, res: Response) => {
+  const { data: rows, error } = await supabase
+    .from("leaderboard")
+    .select(`
+      creator_id, total_score, campaign_id,
+      users:creator_id ( name, avatar ),
+      social_accounts:creator_id ( username )
+    `);
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  // Aggregate total_score per creator across all their campaigns
+  const creatorMap = new Map<string, {
+    creator_id: string; name: string | null; avatar: string | null;
+    username: string | null; total_score: number; campaigns_count: number;
+  }>();
+
+  for (const row of rows ?? []) {
+    const existing = creatorMap.get(row.creator_id);
+    if (existing) {
+      existing.total_score += row.total_score ?? 0;
+      existing.campaigns_count += 1;
+    } else {
+      creatorMap.set(row.creator_id, {
+        creator_id: row.creator_id,
+        name: (row as any).users?.name ?? null,
+        avatar: (row as any).users?.avatar ?? null,
+        username: (row as any).social_accounts?.[0]?.username ?? null,
+        total_score: row.total_score ?? 0,
+        campaigns_count: 1,
+      });
+    }
+  }
+
+  const leaderboard = Array.from(creatorMap.values())
+    .sort((a, b) => b.total_score - a.total_score)
+    .slice(0, 100);
+
+  res.json({ leaderboard });
+});
+
+// GET /bounties/:id/leaderboard — leaderboard for ONE specific campaign
+router.get("/:id/leaderboard", async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  const { data: campaign } = await supabase
+    .from("bounties")
+    .select("id, project_name, reward_usdc")
+    .eq("id", id)
+    .single();
+
+  if (!campaign) {
+    res.status(404).json({ error: "Campaign not found" });
+    return;
+  }
+
+  const { data: rows } = await supabase
+    .from("leaderboard")
+    .select(`
+      creator_id, total_score,
+      users:creator_id ( name, avatar ),
+      social_accounts:creator_id ( username )
+    `)
+    .eq("campaign_id", id)
+    .order("total_score", { ascending: false })
+    .limit(50);
+
+  res.json({ campaign, leaderboard: rows ?? [] });
+});
+
 // POST /bounties/:id/claim — legacy endpoint
 router.post("/:id/claim", requireAuth, async (req: Request, res: Response) => {
   const { id } = req.params;

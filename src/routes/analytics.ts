@@ -116,6 +116,40 @@ router.post("/tiktok/sync", requireAuth, async (req, res: Response) => {
   }
 });
 
+// GET /analytics/tiktok/campaign-matched — ONLY videos that matched at least one
+// active campaign's hashtags. This is what the Top Performing page should call —
+// it shows campaign performance, not the creator's full TikTok history.
+router.get("/tiktok/campaign-matched", requireAuth, async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+
+  // Get all video_analysis rows for this creator — these only exist for videos
+  // that passed the campaign hashtag match and got queued for AI verification
+  const { data: analyses, error } = await supabase
+    .from("video_analysis")
+    .select(`
+      *,
+      tiktok_posts:video_id ( title, cover_image_url, view_count, like_count, comment_count, share_count, engagement_rate, fetched_at ),
+      bounties:campaign_id ( project_name, token_icon, required_hashtags )
+    `)
+    .eq("creator_id", user.id)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  if (!analyses || analyses.length === 0) {
+    res.json({
+      posts: [],
+      message: "No campaign-matched posts yet. Join a campaign and post with its required hashtag, then sync your TikTok.",
+    });
+    return;
+  }
+
+  res.json({ posts: analyses });
+});
+
 // GET /analytics/tiktok — get stored analytics for logged in user, now includes verification data
 router.get("/tiktok", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;

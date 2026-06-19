@@ -225,6 +225,55 @@ router.get("/campaigns", requireAuth, async (req, res: Response) => {
 
   res.json({ campaigns });
 });
+
+// Add to src/routes/me.ts before export default router
+
+// GET /me/influence-stats — score + eligible videos + campaigns, with 24h change
+router.get("/influence-stats", requireAuth, async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+  const now = new Date();
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+  // Current totals
+  const { data: leaderboardRows } = await supabase
+    .from("leaderboard")
+    .select("total_score, campaign_id, updated_at")
+    .eq("creator_id", user.id);
+
+  const totalScore = (leaderboardRows ?? []).reduce((sum, r) => sum + (r.total_score ?? 0), 0);
+  const campaignsJoined = new Set((leaderboardRows ?? []).map((r) => r.campaign_id)).size;
+
+  const { data: videoRows } = await supabase
+    .from("video_analysis")
+    .select("leaderboard_eligible, created_at")
+    .eq("creator_id", user.id);
+
+  const eligibleVideos = (videoRows ?? []).filter((v) => v.leaderboard_eligible).length;
+
+  // 24h-ago snapshot — videos/campaigns created before yesterday, to compute % change
+  const eligibleVideosYesterday = (videoRows ?? []).filter(
+    (v) => v.leaderboard_eligible && new Date(v.created_at) < yesterday
+  ).length;
+
+  const scoreYesterday = (leaderboardRows ?? [])
+    .filter((r) => new Date(r.updated_at) < yesterday)
+    .reduce((sum, r) => sum + (r.total_score ?? 0), 0);
+
+  function pctChange(current: number, previous: number): number {
+    if (previous === 0) return current > 0 ? 100 : 0;
+    return ((current - previous) / previous) * 100;
+  }
+
+  res.json({
+    totalScore,
+    scoreChangePercent: pctChange(totalScore, scoreYesterday),
+    eligibleVideos,
+    eligibleChangePercent: pctChange(eligibleVideos, eligibleVideosYesterday),
+    campaignsJoined,
+    campaignsChangePercent: 0, // campaigns joined rarely changes day-to-day; kept for UI consistency
+  });
+});
+
 // PUT /me/wallet — save wallet address
 router.put("/wallet", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;

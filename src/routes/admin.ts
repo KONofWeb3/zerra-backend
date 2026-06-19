@@ -414,6 +414,114 @@ router.get("/trending-videos", async (_req, res: Response) => {
 });
 
 export default router;
+// Add to src/routes/admin.ts before export default router
+
+// GET /admin/users/:id/full — complete profile for one user, for the admin detail view
+router.get("/users/:id/full", async (req, res: Response) => {
+  const { id } = req.params;
+
+  const { data: user, error: userError } = await supabase
+    .from("users")
+    .select("*")
+    .eq("id", id)
+    .single();
+
+  if (userError || !user) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+
+  // Connected social accounts (TikTok etc.)
+  const { data: socialAccounts } = await supabase
+    .from("social_accounts")
+    .select("platform, username, created_at, expires_at")
+    .eq("user_id", id);
+
+  // Wallet info (assuming users table has wallet_address/chain, per earlier wallet feature)
+  const walletInfo = {
+    address: user.wallet_address ?? null,
+    chain: user.wallet_chain ?? null,
+  };
+
+  // TikTok post stats (impressions / engagement)
+  const { data: posts } = await supabase
+    .from("tiktok_posts")
+    .select("view_count, like_count, comment_count, share_count, fetched_at")
+    .eq("user_id", id);
+
+  const totalViews    = (posts ?? []).reduce((s, p) => s + Number(p.view_count || 0), 0);
+  const totalLikes     = (posts ?? []).reduce((s, p) => s + Number(p.like_count || 0), 0);
+  const totalComments  = (posts ?? []).reduce((s, p) => s + Number(p.comment_count || 0), 0);
+  const totalShares    = (posts ?? []).reduce((s, p) => s + Number(p.share_count || 0), 0);
+
+  // Leaderboard / score data — total "bolts" (points) and per-campaign breakdown
+  const { data: leaderboardRows } = await supabase
+    .from("leaderboard")
+    .select(`
+      total_score, campaign_id, updated_at,
+      bounties:campaign_id ( project_name, token_icon )
+    `)
+    .eq("creator_id", id);
+
+  const totalScore = (leaderboardRows ?? []).reduce((s, r) => s + (r.total_score ?? 0), 0);
+
+  // Video analysis — per-campaign post counts + verification status
+  const { data: videoRows } = await supabase
+    .from("video_analysis")
+    .select(`
+      video_id, campaign_id, final_score, authenticity_score, status, leaderboard_eligible, created_at,
+      bounties:campaign_id ( project_name )
+    `)
+    .eq("creator_id", id)
+    .order("created_at", { ascending: false });
+
+  // Group videos by campaign for a clean per-campaign post count
+  const campaignPostCounts = new Map<string, { name: string; count: number; eligible: number }>();
+  for (const v of videoRows ?? []) {
+    const campaignName = (v as any).bounties?.project_name ?? "Unknown";
+    const key = v.campaign_id ?? "none";
+    if (!campaignPostCounts.has(key)) {
+      campaignPostCounts.set(key, { name: campaignName, count: 0, eligible: 0 });
+    }
+    const entry = campaignPostCounts.get(key)!;
+    entry.count += 1;
+    if (v.leaderboard_eligible) entry.eligible += 1;
+  }
+
+  res.json({
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      avatar: user.avatar,
+      role: user.role,
+      account_status: user.account_status,
+      created_at: user.created_at,
+      restricted_reason: user.restricted_reason,
+    },
+    socialAccounts: socialAccounts ?? [],
+    wallet: walletInfo,
+    socialStats: {
+      totalViews, totalLikes, totalComments, totalShares,
+      totalPosts: posts?.length ?? 0,
+    },
+    scoring: {
+      totalScore,
+      campaigns: Array.from(campaignPostCounts.entries()).map(([campaignId, data]) => ({
+        campaignId, ...data,
+      })),
+    },
+    recentVideos: (videoRows ?? []).slice(0, 20).map((v) => ({
+      videoId: v.video_id,
+      campaignName: (v as any).bounties?.project_name ?? "Unknown",
+      finalScore: v.final_score,
+      authenticityScore: v.authenticity_score,
+      status: v.status,
+      eligible: v.leaderboard_eligible,
+      createdAt: v.created_at,
+    })),
+  });
+});
 
 // GET /admin/audit-log — all admin actions, newest first
 router.get("/audit-log", async (_req, res: Response) => {

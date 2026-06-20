@@ -2,7 +2,6 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import dotenv from "dotenv";
-import { serve } from "inngest/express";
 import { supabase } from "./lib/supabase";
 import meRouter from "./routes/me";
 import authRouter from "./routes/auth";
@@ -11,8 +10,7 @@ import portfolioRouter from "./routes/portfolio";
 import analyticsRouter from "./routes/analytics";
 import adminRouter from "./routes/admin";
 import projectRouter from "./routes/project";
-import { inngest } from "./inngest/client";
-import { analyzeVideoJob } from "./inngest/functions/analyzeVideo";
+import { startVerificationWorker } from "./jobs/verificationWorker";
 
 dotenv.config();
 
@@ -26,17 +24,6 @@ app.use(express.json());
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", project: "zerra-backend" });
 });
-
-// Inngest endpoint — this is what Inngest's servers call to trigger/run jobs.
-// Register this exact URL (https://your-render-url.onrender.com/api/inngest)
-// in the Inngest dashboard under your app's settings.
-app.use(
-  "/api/inngest",
-  serve({
-    client: inngest,
-    functions: [analyzeVideoJob],
-  })
-);
 
 app.use("/me", meRouter);
 app.use("/auth", authRouter);
@@ -58,8 +45,11 @@ async function startServer() {
 
   app.listen(PORT, () => {
     console.log(`🚀 Zerra backend running on port ${PORT}`);
-    console.log(`⚡ Inngest endpoint live at /api/inngest`);
   });
+
+  // Start the in-process verification worker — replaces Inngest entirely.
+  // Polls video_analysis for 'pending' rows every 30s and processes them.
+  startVerificationWorker();
 }
 
 startServer();

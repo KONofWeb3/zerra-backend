@@ -3,7 +3,6 @@ import { requireAuth } from "../middleware/requireAuth";
 import { AuthRequest } from "../types";
 import { supabase } from "../lib/supabase";
 import { getTikTokVideos } from "../lib/tiktok";
-import { inngest } from "../inngest/client";
 import { matchCampaigns } from "../lib/ai/matchCampaigns";
 
 const router = Router();
@@ -82,25 +81,28 @@ router.post("/tiktok/sync", requireAuth, async (req, res: Response) => {
 
       if (matches.length === 0) continue; // no campaign relevance — skip AI analysis entirely
 
-      // Fire one job PER matched campaign (a video can count toward multiple campaigns)
+      // Create one PENDING row PER matched campaign (a video can count toward
+      // multiple campaigns). The cron worker picks these up and processes
+      // them — no external job queue needed.
       for (const match of matches) {
-        await inngest.send({
-          name: "video/synced",
-          data: {
-            videoId: v.id,
-            creatorId: user.id,
-            campaignId: match.campaignId,
-            videoUrl: v.embed_link,
+        await supabase.from("video_analysis").upsert(
+          {
+            video_id: v.id,
+            creator_id: user.id,
+            campaign_id: match.campaignId,
+            video_url: v.embed_link,
             caption,
-            creatorHandle: account.username ?? "unknown",
-            campaignName: match.campaignName,
-            requiredKeywords: match.requiredKeywords,
+            creator_handle: account.username ?? "unknown",
+            campaign_name: match.campaignName,
+            required_keywords: match.requiredKeywords,
             likes: v.like_count,
             views: v.view_count,
             comments: v.comment_count,
             shares: v.share_count,
+            status: "pending",
           },
-        });
+          { onConflict: "video_id,campaign_id" }
+        );
         totalJobsFired++;
       }
     }

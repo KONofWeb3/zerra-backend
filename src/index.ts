@@ -18,7 +18,33 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 
 app.use(helmet());
-app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }));
+
+// Accepts both the www and non-www version of the domain (plus the old
+// demo subdomain, kept alive for old links). www.zerra.pro and zerra.pro
+// are different CORS origins to the browser even though they're the same
+// site to a human — this is what broke every authenticated request after
+// the domain migration.
+const ALLOWED_ORIGINS = [
+  "https://zerra.pro",
+  "https://www.zerra.pro",
+  "https://demo.zerra.pro",
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (server-to-server, curl, Postman, etc.)
+    if (!origin) return callback(null, true);
+
+    if (ALLOWED_ORIGINS.includes(origin)) {
+      return callback(null, true);
+    }
+
+    console.warn(`CORS blocked request from origin: ${origin}`);
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+}));
+
 app.use(express.json());
 
 app.get("/health", (_req, res) => {

@@ -53,21 +53,25 @@ router.get("/tt/callback", async (req: Request, res: Response) => {
     const tokens = await exchangeTikTokCode(code as string);
 
     // Fetch user info — use display_name as fallback if username unavailable
-    let username    = `tiktok_${tokens.open_id.slice(0, 8)}`;
-    let displayName = username;
-    let avatarUrl   = null;
+    let username       = `tiktok_${tokens.open_id.slice(0, 8)}`;
+    let displayName    = username;
+    let avatarUrl       = null;
+    let followerCount  = 0;
 
     try {
       const tiktokUser = await getTikTokUser(tokens.access_token);
       console.log("TikTok user data received:", JSON.stringify(tiktokUser));
-      username    = tiktokUser.username    || tiktokUser.display_name || username;
-      displayName = tiktokUser.display_name || username;
-      avatarUrl   = tiktokUser.avatar_url  || null;
+      username       = tiktokUser.username    || tiktokUser.display_name || username;
+      displayName    = tiktokUser.display_name || username;
+      avatarUrl       = tiktokUser.avatar_url   || null;
+      followerCount  = tiktokUser.follower_count ?? 0;
     } catch (err: any) {
       console.warn("Could not fetch TikTok user info:", err.message);
     }
 
-    // Save to social_accounts
+    // Save to social_accounts — now also stores follower_count, which the
+    // frontend reads via accounts.find(a => a.platform === 'tiktok')?.follower_count
+    // to determine Influencer Badge eligibility.
     const { error: dbError } = await supabase
       .from("social_accounts")
       .upsert(
@@ -76,6 +80,7 @@ router.get("/tt/callback", async (req: Request, res: Response) => {
           platform: "tiktok",
           platform_user_id: tokens.open_id,
           username,
+          follower_count: followerCount,
           access_token: tokens.access_token,
           refresh_token: tokens.refresh_token,
           expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
@@ -84,6 +89,23 @@ router.get("/tt/callback", async (req: Request, res: Response) => {
       );
 
     if (dbError) throw dbError;
+
+    // CRITICAL FIX: the frontend's "TikTok: Connected/Not connected" display
+    // (Settings sidebar, Dashboard header) reads users.tiktok_username via
+    // GET /me — NOT social_accounts. The original callback only wrote to
+    // social_accounts and never touched this field, so the UI never
+    // reflected a successful connection even though the DB write succeeded.
+    const { error: usersError } = await supabase
+      .from("users")
+      .update({ tiktok_username: username })
+      .eq("id", user.id);
+
+    if (usersError) {
+      // Don't fail the whole flow over this — social_accounts is the
+      // source of truth for actual functionality (sync, analytics).
+      // tiktok_username on users is just a display convenience field.
+      console.error("Failed to update users.tiktok_username:", usersError.message);
+    }
 
     res.redirect(`${process.env.FRONTEND_URL}/settings?connected=tiktok`);
   } catch (err: any) {

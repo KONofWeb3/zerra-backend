@@ -185,7 +185,7 @@ router.get("/tiktok-status", requireAuth, async (req, res: Response) => {
   res.json({ connected: !!data });
 });
 
-// Add to src/routes/me.ts before export default router
+
 
 // GET /me/joined-campaigns — IDs of campaigns this user has joined
 router.get("/joined-campaigns", requireAuth, async (req, res: Response) => {
@@ -227,7 +227,7 @@ router.get("/campaigns", requireAuth, async (req, res: Response) => {
   res.json({ campaigns });
 });
 
-// Add to src/routes/me.ts before export default router
+
 
 // GET /me/influence-stats — score + eligible videos + campaigns, with 24h change
 router.get("/influence-stats", requireAuth, async (req, res: Response) => {
@@ -404,6 +404,58 @@ router.post("/badges/:id/claim", requireAuth, async (req, res: Response) => {
       attainedAt: existing?.claimed_at ?? data?.claimed_at ?? new Date().toISOString(),
     },
   });
+});
+
+// Add to src/routes/me.ts before export default router
+
+// DELETE /me — permanently delete the logged-in user's account and all
+// associated data. Irreversible — the frontend must confirm with the
+// user before calling this.
+router.delete("/", requireAuth, async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+
+  try {
+    // Clean up owned data first. Most of these should already cascade
+    // via ON DELETE CASCADE foreign keys if your schema has them set up
+    // — but deleting explicitly here means this still works correctly
+    // even on tables where that constraint might be missing, and avoids
+    // leaving orphaned rows if any FK is set to SET NULL/RESTRICT instead.
+    await supabase.from("badge_claims").delete().eq("user_id", user.id);
+    await supabase.from("claims").delete().eq("user_id", user.id);
+    await supabase.from("social_accounts").delete().eq("user_id", user.id);
+    await supabase.from("video_analysis").delete().eq("creator_id", user.id);
+    await supabase.from("leaderboard").delete().eq("creator_id", user.id);
+    await supabase.from("tiktok_posts").delete().eq("user_id", user.id);
+
+    // Delete the users table row
+    const { error: usersError } = await supabase
+      .from("users")
+      .delete()
+      .eq("id", user.id);
+
+    if (usersError) {
+      console.error("Failed to delete users row:", usersError.message);
+      res.status(500).json({ error: "Failed to delete account data" });
+      return;
+    }
+
+    // Delete the actual Supabase Auth account — this is what prevents
+    // the person from logging back in afterward. Must be the LAST step,
+    // since once this succeeds the user.id may no longer resolve to a
+    // valid auth session for any cleanup that still needed to happen.
+    const { error: authError } = await supabase.auth.admin.deleteUser(user.id);
+
+    if (authError) {
+      console.error("Failed to delete auth user:", authError.message);
+      res.status(500).json({ error: "Account data was removed but the login could not be fully deleted. Contact support." });
+      return;
+    }
+
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error("Account deletion error:", err.message);
+    res.status(500).json({ error: "Something went wrong while deleting your account" });
+  }
 });
 // DELETE /me/wallet — remove wallet address
 router.delete("/wallet", requireAuth, async (req, res: Response) => {

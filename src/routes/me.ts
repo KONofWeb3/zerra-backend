@@ -2,6 +2,7 @@ import { Router, Response } from "express";
 import { requireAuth } from "../middleware/requireAuth";
 import { AuthRequest } from "../types";
 import { supabase } from "../lib/supabase";
+import { BADGE_DEFS, FOLLOWER_THRESHOLD } from "../lib/badges";
 
 const router = Router();
 
@@ -299,6 +300,111 @@ router.put("/wallet", requireAuth, async (req, res: Response) => {
   res.json({ user: data });
 });
 
+// Replace the /badges and /badges/:id/claim routes in src/routes/me.ts
+// with these two — now enforces follower-count eligibility for
+// 'verified-influencer' server-side, instead of trusting the client.
+
+// GET /me/badges
+router.get("/badges", requireAuth, async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+
+  const { data: claims, error } = await supabase
+    .from("badge_claims")
+    .select("badge_id, claimed_at")
+    .eq("user_id", user.id);
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  // Pull follower_count from social_accounts to check Influencer eligibility
+  const { data: tiktokAccount } = await supabase
+    .from("social_accounts")
+    .select("follower_count")
+    .eq("user_id", user.id)
+    .eq("platform", "tiktok")
+    .single();
+
+  const followerCount = tiktokAccount?.follower_count ?? null;
+  const claimedMap = new Map((claims ?? []).map((c) => [c.badge_id, c.claimed_at]));
+
+  const badges = BADGE_DEFS.map((def) => {
+    const eligible =
+      def.id === "verified-influencer"
+        ? followerCount != null && followerCount >= FOLLOWER_THRESHOLD
+        : true; // early-creator stays membership-based
+
+    return {
+      ...def,
+      eligible,
+      attained: claimedMap.has(def.id),
+      attainedAt: claimedMap.get(def.id) ?? null,
+    };
+  });
+
+  res.json({ badges });
+});
+
+// POST /me/badges/:id/claim
+router.post("/badges/:id/claim", requireAuth, async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+  const { id } = req.params;
+
+  const validBadge = BADGE_DEFS.find((b) => b.id === id);
+  if (!validBadge) {
+    res.status(400).json({ error: "Unknown badge id" });
+    return;
+  }
+
+  // Server-side eligibility re-check — never trust the client's claim
+  // request alone, otherwise anyone could POST directly and bypass
+  // the frontend's follower-count gate entirely.
+  if (id === "verified-influencer") {
+    const { data: tiktokAccount } = await supabase
+      .from("social_accounts")
+      .select("follower_count")
+      .eq("user_id", user.id)
+      .eq("platform", "tiktok")
+      .single();
+
+    const followerCount = tiktokAccount?.follower_count ?? null;
+    if (followerCount == null || followerCount < FOLLOWER_THRESHOLD) {
+      res.status(403).json({ error: "Not eligible for this badge yet" });
+      return;
+    }
+  }
+
+  const { data, error } = await supabase
+    .from("badge_claims")
+    .upsert(
+      { user_id: user.id, badge_id: id },
+      { onConflict: "user_id,badge_id", ignoreDuplicates: true }
+    )
+    .select()
+    .single();
+
+  if (error && error.code !== "23505") {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  const { data: existing } = await supabase
+    .from("badge_claims")
+    .select("claimed_at")
+    .eq("user_id", user.id)
+    .eq("badge_id", id)
+    .single();
+
+  res.json({
+    badge: {
+      ...validBadge,
+      eligible: true,
+      attained: true,
+      attainedAt: existing?.claimed_at ?? data?.claimed_at ?? new Date().toISOString(),
+    },
+  });
+});
 // DELETE /me/wallet — remove wallet address
 router.delete("/wallet", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;

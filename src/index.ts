@@ -11,6 +11,7 @@ import analyticsRouter from "./routes/analytics";
 import adminRouter from "./routes/admin";
 import projectRouter from "./routes/project";
 import instagramRouter from "./routes/instagram";
+import uploadRouter from "./routes/upload";
 import { startVerificationWorker } from "./jobs/verificationWorker";
 
 dotenv.config();
@@ -60,6 +61,7 @@ app.use("/analytics", analyticsRouter);
 app.use("/admin", adminRouter);
 app.use("/project", projectRouter);
 app.use("/auth/instagram", instagramRouter);
+app.use("/upload", uploadRouter);
 
 async function startServer() {
   const { error } = await supabase.from("users").select("id").limit(1);

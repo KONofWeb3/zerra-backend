@@ -14,6 +14,7 @@ import {
   createIGMediaContainer,
   publishIGMedia,
 } from "../lib/instagram";
+import { deleteFile } from "../lib/r2";
 import crypto from "crypto";
 
 const router = Router();
@@ -202,6 +203,15 @@ router.post("/publish", requireAuth, async (req: Request, res: Response) => {
       await new Promise((r) => setTimeout(r, 5000));
     }
     const mediaId = await publishIGMedia(account.platform_user_id, account.access_token, containerId);
+
+    // Clean up the R2 file now that Instagram has fetched it —
+    // keeps storage usage near zero since files are only needed temporarily
+    const r2Key = req.body.r2Key as string | undefined;
+    if (r2Key) {
+      deleteFile(r2Key).catch((err) =>
+        console.error("Failed to delete R2 file after publish:", err.message)
+      );
+    }
 
     res.json({ success: true, mediaId });
   } catch (err: any) {

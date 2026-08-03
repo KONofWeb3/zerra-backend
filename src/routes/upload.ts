@@ -61,8 +61,9 @@ router.post("/presign", requireAuth, async (req, res: Response) => {
 });
 
 // DELETE /upload/:key — delete a file from R2 (called after successful post)
-router.delete("/:key(*)", requireAuth, async (req, res: Response) => {
-  const key = (Array.isArray(req.params.key) ? req.params.key[0] : req.params.key) as string;
+router.delete("/*key", requireAuth, async (req, res: Response) => {
+  const keyParam = req.params.key;
+  const key = Array.isArray(keyParam) ? keyParam.join("/") : keyParam;
 
   // Security: ensure the key belongs to this user
   const user = (req as AuthRequest).user;

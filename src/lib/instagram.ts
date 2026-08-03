@@ -15,11 +15,10 @@ export function getInstagramAuthUrl(state: string): string {
     redirect_uri:  IG_REDIRECT_URI,
     scope: [
       "instagram_basic",
-      "instagram_business_basic",
-      "instagram_business_content_publish",
       "instagram_manage_insights",
-      "pages_read_engagement",
+      "instagram_content_publish",
       "pages_show_list",
+      "pages_read_engagement",
     ].join(","),
     response_type: "code",
     state,

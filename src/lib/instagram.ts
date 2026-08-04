@@ -16,7 +16,6 @@ export function getInstagramAuthUrl(state: string): string {
     scope: [
       "instagram_basic",
       "instagram_manage_insights",
-      "instagram_content_publish",
       "pages_show_list",
       "pages_read_engagement",
     ].join(","),

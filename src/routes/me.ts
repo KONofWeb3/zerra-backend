@@ -405,7 +405,54 @@ router.post("/badges/:id/claim", requireAuth, async (req, res: Response) => {
     },
   });
 });
+// Add to src/routes/me.ts before export default router
 
+// GET /me/referral — get this user's referral code, link, and stats
+router.get("/referral", requireAuth, async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+
+  const { data: userData } = await supabase
+    .from("users")
+    .select("referral_code, referral_points, name, email")
+    .eq("id", user.id)
+    .single();
+
+  // Generate a code if somehow missing (safety net)
+  let code = userData?.referral_code;
+  if (!code) {
+    const base = (userData?.name ?? userData?.email?.split("@")[0] ?? "creator")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "-")
+      .slice(0, 20);
+    code = `${base}-${user.id.slice(0, 6)}`;
+    await supabase.from("users").update({ referral_code: code }).eq("id", user.id);
+  }
+
+  // Count how many people this user has referred
+  const { count: totalReferrals } = await supabase
+    .from("referrals")
+    .select("*", { count: "exact", head: true })
+    .eq("referrer_id", user.id);
+
+  // Get recent referrals with the referred user's name
+  const { data: recentReferrals } = await supabase
+    .from("referrals")
+    .select(`
+      created_at, reward_given, reward_amount,
+      referred:referred_id ( name, email, created_at )
+    `)
+    .eq("referrer_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  res.json({
+    referralCode: code,
+    referralLink: `https://zerra.pro/ref/${code}`,
+    totalReferrals: totalReferrals ?? 0,
+    referralPoints: userData?.referral_points ?? 0,
+    recentReferrals: recentReferrals ?? [],
+  });
+});
 // Add to src/routes/me.ts before export default router
 
 // DELETE /me — permanently delete the logged-in user's account and all

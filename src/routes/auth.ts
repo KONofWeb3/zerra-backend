@@ -7,6 +7,7 @@ import {
   exchangeTikTokCode,
   getTikTokUser,
 } from "../lib/tiktok";
+import { calculateAndStoreInfluenceScore } from "../lib/scoringData";
 import crypto from "crypto";
 
 const router = Router();
@@ -158,6 +159,14 @@ router.get("/tt/callback", async (req: Request, res: Response) => {
 
     if (usersError) {
       console.error("Failed to update users.tiktok_username:", usersError.message);
+    }
+
+    // Calculate the Influence Rating now, before redirecting, so it's
+    // already non-zero by the time the frontend lands back on Settings.
+    try {
+      await calculateAndStoreInfluenceScore(user.id);
+    } catch (err: any) {
+      console.error("Failed to calculate influence score after TikTok connect:", err.message);
     }
 
     res.redirect(`${process.env.FRONTEND_URL}/settings?connected=tiktok`);

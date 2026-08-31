@@ -275,6 +275,38 @@ router.get("/influence-stats", requireAuth, async (req, res: Response) => {
   });
 });
 
+// GET /me/influence-rating — cross-platform social Influence Rating (100-1000),
+// computed by src/lib/scoringData.ts on connect and refreshed by
+// src/jobs/influenceScoreWorker.ts. Distinct from /me/influence-stats, which
+// is the per-campaign AI-verification leaderboard score — a different metric.
+router.get("/influence-rating", requireAuth, async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+
+  const { data, error } = await supabase
+    .from("creator_influence_scores")
+    .select("score, audience_score, engagement_score, impact_score, percentile, score_change_24h, confidence_score")
+    .eq("creator_id", user.id)
+    .single();
+
+  if (error || !data) {
+    // No social account connected yet (or the initial calculation is still
+    // running) — never fabricate a 0, tell the frontend there's nothing yet.
+    res.json({ calculated: false });
+    return;
+  }
+
+  res.json({
+    calculated: true,
+    score: data.score,
+    audienceScore: data.audience_score,
+    engagementScore: data.engagement_score,
+    impactScore: data.impact_score,
+    percentile: data.percentile,
+    scoreChange24h: data.score_change_24h,
+    confidenceScore: data.confidence_score,
+  });
+});
+
 // PUT /me/wallet — save wallet address
 router.put("/wallet", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;

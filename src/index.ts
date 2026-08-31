@@ -13,6 +13,7 @@ import projectRouter from "./routes/project";
 import instagramRouter from "./routes/instagram";
 import uploadRouter from "./routes/upload";
 import { startVerificationWorker } from "./jobs/verificationWorker";
+import { startInfluenceScoreWorker } from "./jobs/influenceScoreWorker";
 
 dotenv.config();
 
@@ -80,6 +81,10 @@ async function startServer() {
   // Start the in-process verification worker — replaces Inngest entirely.
   // Polls video_analysis for 'pending' rows every 30s and processes them.
   startVerificationWorker();
+
+  // Keeps every connected creator's Influence Rating fresh (see
+  // src/lib/scoringData.ts for the immediate on-connect calculation).
+  startInfluenceScoreWorker();
 }
 
 startServer();

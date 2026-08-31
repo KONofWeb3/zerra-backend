@@ -7,8 +7,7 @@ import {
   getInstagramAuthUrl,
   exchangeInstagramCode,
   getLongLivedToken,
-  getFacebookPages,
-  getIGBusinessAccount,
+  getIGProfile,
   getIGMedia,
   getIGInsights,
   createIGMediaContainer,
@@ -19,7 +18,7 @@ import crypto from "crypto";
 
 const router = Router();
 
-// GET /auth/instagram — redirect user to Facebook/Instagram OAuth
+// GET /auth/instagram — redirect user to Instagram's OAuth login
 router.get("/", requireAuth, (req: Request, res: Response) => {
   const token = req.query.token as string;
   const state = Buffer.from(
@@ -54,28 +53,20 @@ router.get("/callback", async (req: Request, res: Response) => {
     }
     const user = data.user;
 
-    // Exchange code → short-lived token → long-lived token (60 days)
+    // Exchange code → short-lived token (also returns the ig-scoped user id
+    // directly — Instagram Login connects the account itself, no Facebook
+    // Page lookup needed) → long-lived token (60 days)
     const shortToken = await exchangeInstagramCode(code as string);
     const longToken  = await getLongLivedToken(shortToken.access_token);
     const expiresAt  = new Date(Date.now() + (longToken.expires_in ?? 5184000) * 1000).toISOString();
 
-    // Find the first Facebook Page with a linked Instagram Business Account
-    const pages = await getFacebookPages(longToken.access_token);
-    let igAccount = null;
-    let pageAccessToken = longToken.access_token;
+    const profile = await getIGProfile(shortToken.user_id, longToken.access_token);
 
-    for (const page of pages) {
-      const account = await getIGBusinessAccount(page.id, page.access_token);
-      if (account) {
-        igAccount        = account;
-        pageAccessToken  = page.access_token;
-        break;
-      }
-    }
-
-    if (!igAccount) {
-      // User authenticated but has no Instagram Business Account linked to a Facebook Page
-      res.redirect(`${frontendUrl}/settings?error=instagram_no_business_account`);
+    if (profile.account_type !== "BUSINESS" && profile.account_type !== "CREATOR") {
+      // Instagram Login requires a Professional (Business/Creator) account —
+      // this shouldn't normally be reachable since Instagram gates it upstream,
+      // but guard anyway in case that check is ever loosened.
+      res.redirect(`${frontendUrl}/settings?error=instagram_not_professional`);
       return;
     }
 
@@ -86,15 +77,16 @@ router.get("/callback", async (req: Request, res: Response) => {
         {
           user_id:          user.id,
           platform:         "instagram",
-          platform_user_id: igAccount.ig_id,
-          username:         igAccount.username,
-          follower_count:   igAccount.followers_count,
-          access_token:     pageAccessToken, // page token for Graph API calls
-          refresh_token:    longToken.access_token, // user token for refreshing
+          platform_user_id: profile.ig_id,
+          username:         profile.username,
+          follower_count:   profile.followers_count,
+          access_token:     longToken.access_token,
+          // Instagram Login has no separate refresh token — refreshing reuses
+          // this same long-lived access_token (see refreshLongLivedToken).
+          refresh_token:    longToken.access_token,
           expires_at:       expiresAt,
           metadata: JSON.stringify({
-            name:                igAccount.name,
-            profile_picture_url: igAccount.profile_picture_url,
+            profile_picture_url: profile.profile_picture_url,
           }),
         },
         { onConflict: "user_id,platform" }
@@ -105,7 +97,7 @@ router.get("/callback", async (req: Request, res: Response) => {
     // Also store username on users table for quick display in sidebar
     await supabase
       .from("users")
-      .update({ instagram_username: igAccount.username })
+      .update({ instagram_username: profile.username })
       .eq("id", user.id);
 
     res.redirect(`${frontendUrl}/settings?connected=instagram`);

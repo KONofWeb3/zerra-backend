@@ -1,4 +1,9 @@
 // src/lib/instagram.ts
+//
+// Instagram API with Instagram Login (business login) — NOT the legacy
+// Facebook Login for Business flow. The user connects their Instagram
+// Professional (Business/Creator) account directly; there is no Facebook
+// Page in the middle, so no page-linking step is needed.
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -7,106 +12,128 @@ export const IG_APP_SECRET = process.env.INSTAGRAM_APP_SECRET!;
 export const IG_REDIRECT_URI = process.env.INSTAGRAM_REDIRECT_URI
   ?? "https://zerra-backend-ms4p.onrender.com/auth/instagram/callback";
 
+// Scopes registered on the "Instagram API" use case (API setup with
+// Instagram login) — keep this in sync with the Permissions and features
+// page in the Meta dashboard.
+const IG_SCOPES = [
+  "instagram_business_basic",
+  "instagram_business_manage_messages",
+  "instagram_business_manage_comments",
+  "instagram_business_content_publish",
+  "instagram_business_manage_insights",
+];
+
 // ── OAuth ──────────────────────────────────────────────────────────────────
 
 export function getInstagramAuthUrl(state: string): string {
   const params = new URLSearchParams({
+    force_reauth:  "true",
     client_id:     IG_APP_ID,
     redirect_uri:  IG_REDIRECT_URI,
-    scope: [
-      "instagram_basic",
-      "instagram_manage_insights",
-      "pages_show_list",
-      "pages_read_engagement",
-    ].join(","),
     response_type: "code",
+    scope:         IG_SCOPES.join(","),
     state,
   });
-  return `https://www.facebook.com/v19.0/dialog/oauth?${params.toString()}`;
+  return `https://www.instagram.com/oauth/authorize?${params.toString()}`;
 }
 
-export interface IGTokenResponse {
-  access_token:  string;
-  token_type:    string;
-  expires_in?:   number;
+export interface IGShortTokenResponse {
+  access_token: string;
+  user_id:      string; // Instagram-scoped user id — this IS the ig account id, no Page lookup needed
+  permissions?: string;
 }
 
-export async function exchangeInstagramCode(code: string): Promise<IGTokenResponse> {
-  const res = await fetch("https://graph.facebook.com/v19.0/oauth/access_token", {
+// Step 1 — exchange the ?code= for a short-lived (1hr) access token.
+// Note: this hits api.instagram.com, not graph.facebook.com.
+export async function exchangeInstagramCode(code: string): Promise<IGShortTokenResponse> {
+  const res = await fetch("https://api.instagram.com/oauth/access_token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       client_id:     IG_APP_ID,
       client_secret: IG_APP_SECRET,
+      grant_type:    "authorization_code",
       redirect_uri:  IG_REDIRECT_URI,
       code,
     }),
   });
 
-  const data = await res.json() as IGTokenResponse & { error?: { message: string } };
-  if (!res.ok || data.error) {
-    throw new Error(data.error?.message ?? "Instagram token exchange failed");
+  const data = await res.json() as IGShortTokenResponse & { error_message?: string; error_type?: string };
+  if (!res.ok || (data as any).error_type) {
+    throw new Error(data.error_message ?? "Instagram token exchange failed");
   }
   return data;
 }
 
-// Exchange short-lived token for a long-lived one (valid 60 days)
-export async function getLongLivedToken(shortToken: string): Promise<IGTokenResponse> {
+export interface IGLongTokenResponse {
+  access_token: string;
+  token_type:   string;
+  expires_in:   number; // seconds, ~60 days
+}
+
+// Step 2 — exchange the short-lived token for a long-lived one (60 days).
+// Hits graph.instagram.com, not graph.facebook.com.
+export async function getLongLivedToken(shortToken: string): Promise<IGLongTokenResponse> {
   const params = new URLSearchParams({
-    grant_type:        "fb_exchange_token",
-    client_id:         IG_APP_ID,
-    client_secret:     IG_APP_SECRET,
-    fb_exchange_token: shortToken,
+    grant_type:    "ig_exchange_token",
+    client_secret: IG_APP_SECRET,
+    access_token:  shortToken,
   });
 
-  const res  = await fetch(`https://graph.facebook.com/v19.0/oauth/access_token?${params}`);
-  const data = await res.json() as IGTokenResponse & { error?: { message: string } };
+  const res  = await fetch(`https://graph.instagram.com/access_token?${params}`);
+  const data = await res.json() as IGLongTokenResponse & { error?: { message: string } };
   if (!res.ok || data.error) {
     throw new Error(data.error?.message ?? "Failed to get long-lived token");
   }
   return data;
 }
 
-// ── User & Pages ───────────────────────────────────────────────────────────
+// Refresh a long-lived token before it expires (valid once the token is
+// at least 24h old, refreshes for another 60 days). Not wired into a route
+// yet — call this from a scheduled job before `expires_at`.
+export async function refreshLongLivedToken(currentToken: string): Promise<IGLongTokenResponse> {
+  const params = new URLSearchParams({
+    grant_type:   "ig_refresh_token",
+    access_token: currentToken,
+  });
 
-export interface IGPage {
-  id:           string;
-  name:         string;
-  access_token: string;
+  const res  = await fetch(`https://graph.instagram.com/refresh_access_token?${params}`);
+  const data = await res.json() as IGLongTokenResponse & { error?: { message: string } };
+  if (!res.ok || data.error) {
+    throw new Error(data.error?.message ?? "Failed to refresh token");
+  }
+  return data;
 }
 
-// Get the Facebook Pages this user manages
-export async function getFacebookPages(accessToken: string): Promise<IGPage[]> {
-  const res  = await fetch(
-    `https://graph.facebook.com/v19.0/me/accounts?fields=id,name,access_token&access_token=${accessToken}`
-  );
-  const data = await res.json() as { data: IGPage[]; error?: { message: string } };
-  if (!res.ok || data.error) throw new Error(data.error?.message ?? "Failed to fetch pages");
-  return data.data ?? [];
+// ── Profile ────────────────────────────────────────────────────────────────
+
+export interface IGProfile {
+  ig_id:               string;
+  username:            string;
+  account_type:        string; // "BUSINESS" | "CREATOR" | "PERSONAL"
+  followers_count:     number;
+  profile_picture_url: string | null;
 }
 
-// Get the Instagram Business Account linked to a Facebook Page
-export async function getIGBusinessAccount(pageId: string, pageToken: string): Promise<{
-  ig_id: string; username: string; name: string; followers_count: number; profile_picture_url: string;
-} | null> {
+// Get the connected account's own profile — no Page lookup, this IS the
+// Instagram Professional account the user just authorized.
+export async function getIGProfile(igUserId: string, accessToken: string): Promise<IGProfile> {
+  const fields = "id,username,account_type,followers_count,profile_picture_url";
   const res  = await fetch(
-    `https://graph.facebook.com/v19.0/${pageId}?fields=instagram_business_account{id,username,name,followers_count,profile_picture_url}&access_token=${pageToken}`
+    `https://graph.instagram.com/v21.0/${igUserId}?fields=${fields}&access_token=${accessToken}`
   );
   const data = await res.json() as {
-    instagram_business_account?: {
-      id: string; username: string; name: string;
-      followers_count: number; profile_picture_url: string;
-    };
+    id: string; username: string; account_type: string;
+    followers_count?: number; profile_picture_url?: string;
     error?: { message: string };
   };
-  if (!res.ok || data.error) throw new Error(data.error?.message ?? "Failed to fetch IG account");
-  if (!data.instagram_business_account) return null;
+  if (!res.ok || data.error) throw new Error(data.error?.message ?? "Failed to fetch Instagram profile");
   return {
-    ig_id:               data.instagram_business_account.id,
-    username:            data.instagram_business_account.username,
-    name:                data.instagram_business_account.name,
-    followers_count:     data.instagram_business_account.followers_count,
-    profile_picture_url: data.instagram_business_account.profile_picture_url,
+    ig_id:               data.id,
+    username:            data.username,
+    account_type:        data.account_type,
+    followers_count:     data.followers_count ?? 0,
+    profile_picture_url: data.profile_picture_url ?? null,
   };
 }
 
@@ -126,7 +153,7 @@ export interface IGMedia {
 export async function getIGMedia(igAccountId: string, accessToken: string): Promise<IGMedia[]> {
   const fields = "id,caption,media_type,media_url,thumbnail_url,timestamp,like_count,comments_count";
   const res    = await fetch(
-    `https://graph.facebook.com/v19.0/${igAccountId}/media?fields=${fields}&limit=25&access_token=${accessToken}`
+    `https://graph.instagram.com/v21.0/${igAccountId}/media?fields=${fields}&limit=25&access_token=${accessToken}`
   );
   const data   = await res.json() as { data: IGMedia[]; error?: { message: string } };
   if (!res.ok || data.error) throw new Error(data.error?.message ?? "Failed to fetch media");
@@ -134,19 +161,20 @@ export async function getIGMedia(igAccountId: string, accessToken: string): Prom
 }
 
 export interface IGInsights {
-  impressions:   number;
   reach:         number;
   profile_views: number;
   follower_count: number;
 }
 
 export async function getIGInsights(igAccountId: string, accessToken: string): Promise<IGInsights> {
-  const metrics = "impressions,reach,profile_views,follower_count";
+  // "impressions" was deprecated for the Instagram API with Instagram Login —
+  // reach, profile_views and follower_count remain.
+  const metrics = "reach,profile_views,follower_count";
   const since   = Math.floor(Date.now() / 1000) - 30 * 24 * 60 * 60; // last 30 days
   const until   = Math.floor(Date.now() / 1000);
 
   const res  = await fetch(
-    `https://graph.facebook.com/v19.0/${igAccountId}/insights?metric=${metrics}&period=day&since=${since}&until=${until}&access_token=${accessToken}`
+    `https://graph.instagram.com/v21.0/${igAccountId}/insights?metric=${metrics}&period=day&since=${since}&until=${until}&access_token=${accessToken}`
   );
   const data = await res.json() as {
     data: { name: string; values: { value: number }[] }[];
@@ -161,7 +189,6 @@ export async function getIGInsights(igAccountId: string, accessToken: string): P
   };
 
   return {
-    impressions:    get("impressions"),
     reach:          get("reach"),
     profile_views:  get("profile_views"),
     follower_count: get("follower_count"),
@@ -191,7 +218,7 @@ export async function createIGMediaContainer(
     access_token: accessToken,
   });
 
-  const res  = await fetch(`https://graph.facebook.com/v19.0/${igAccountId}/media`, {
+  const res  = await fetch(`https://graph.instagram.com/v21.0/${igAccountId}/media`, {
     method: "POST", body,
   });
   const data = await res.json() as { id?: string; error?: { message: string } };
@@ -210,7 +237,7 @@ export async function publishIGMedia(
     access_token: accessToken,
   });
 
-  const res  = await fetch(`https://graph.facebook.com/v19.0/${igAccountId}/media_publish`, {
+  const res  = await fetch(`https://graph.instagram.com/v21.0/${igAccountId}/media_publish`, {
     method: "POST", body,
   });
   const data = await res.json() as { id?: string; error?: { message: string } };

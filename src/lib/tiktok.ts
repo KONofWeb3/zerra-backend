@@ -103,6 +103,7 @@ interface TikTokVideoResponse {
       comment_count: number;
       share_count: number;
       embed_link: string;
+      create_time: number; // Unix seconds — the video's actual publish time, not sync time
     }[];
     cursor: number;
     has_more: boolean;
@@ -117,7 +118,7 @@ export async function getTikTokVideos(accessToken: string): Promise<
   TikTokVideoResponse["data"]["videos"]
 > {
   const res = await fetch(
-    "https://open.tiktokapis.com/v2/video/list/?fields=id,title,cover_image_url,video_description,view_count,like_count,comment_count,share_count,embed_link",
+    "https://open.tiktokapis.com/v2/video/list/?fields=id,title,cover_image_url,video_description,view_count,like_count,comment_count,share_count,embed_link,create_time",
     {
       method: "POST",
       headers: {

@@ -2,120 +2,25 @@ import { Router, Response } from "express";
 import { requireAuth } from "../middleware/requireAuth";
 import { AuthRequest } from "../types";
 import { supabase } from "../lib/supabase";
-import { getTikTokVideos } from "../lib/tiktok";
-import { matchCampaigns } from "../lib/ai/matchCampaigns";
+import { syncTikTokPosts } from "../lib/syncTikTok";
+import { getClassifiedPosts, computePerformanceInsight, computeInfluenceFit, computeBestTimeWindow } from "../lib/analyticsInsights";
 
 const router = Router();
 
 // POST /analytics/tiktok/sync — fetch videos, save all to dashboard,
-// but only queue AI verification for videos matching an active campaign
+// but only queue AI verification for videos matching an active campaign.
+// The actual logic lives in lib/syncTikTok.ts so it can also run
+// automatically right after a creator connects TikTok (see routes/auth.ts).
 router.post("/tiktok/sync", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;
+  const result = await syncTikTokPosts(user.id);
 
-  const { data: account, error: accountError } = await supabase
-    .from("social_accounts")
-    .select("*")
-    .eq("user_id", user.id)
-    .eq("platform", "tiktok")
-    .single();
-
-  if (accountError || !account) {
-    res.status(404).json({ error: "No TikTok account connected" });
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.error });
     return;
   }
 
-  if (new Date(account.expires_at) < new Date()) {
-    res.status(401).json({ error: "TikTok token expired, please reconnect" });
-    return;
-  }
-
-  try {
-    const videos = await getTikTokVideos(account.access_token);
-
-    if (!videos || videos.length === 0) {
-      res.json({ message: "No videos found", synced: 0, campaignMatches: 0 });
-      return;
-    }
-
-    type TikTokVideo = Awaited<ReturnType<typeof getTikTokVideos>>[number];
-    const rows = videos.map((v: TikTokVideo) => {
-      const totalEngagements = v.like_count + v.comment_count + v.share_count;
-      const engagementRate =
-        v.view_count > 0
-          ? parseFloat(((totalEngagements / v.view_count) * 100).toFixed(2))
-          : 0;
-
-      return {
-        user_id: user.id,
-        post_id: v.id,
-        title: v.title,
-        cover_image_url: v.cover_image_url,
-        view_count: v.view_count,
-        like_count: v.like_count,
-        comment_count: v.comment_count,
-        share_count: v.share_count,
-        engagement_rate: engagementRate,
-        fetched_at: new Date().toISOString(),
-      };
-    });
-
-    // Save ALL videos to dashboard — creator's own analytics page shows everything,
-    // campaign matching only gates AI verification + leaderboard eligibility
-    const { error: upsertError } = await supabase
-      .from("tiktok_posts")
-      .upsert(rows, { onConflict: "user_id,post_id" });
-
-    if (upsertError) {
-      res.status(500).json({ error: upsertError.message });
-      return;
-    }
-
-    // Filter: only fire AI verification for videos that match an active campaign's
-    // hashtags/keywords. This is the key fix — previously every video got analyzed
-    // regardless of campaign relevance.
-    let totalJobsFired = 0;
-
-    for (const v of videos as TikTokVideo[]) {
-      const caption = v.video_description || v.title || "";
-      const matches = await matchCampaigns(caption);
-
-      if (matches.length === 0) continue; // no campaign relevance — skip AI analysis entirely
-
-      // Create one PENDING row PER matched campaign (a video can count toward
-      // multiple campaigns). The cron worker picks these up and processes
-      // them — no external job queue needed.
-      for (const match of matches) {
-        await supabase.from("video_analysis").upsert(
-          {
-            video_id: v.id,
-            creator_id: user.id,
-            campaign_id: match.campaignId,
-            video_url: v.embed_link,
-            caption,
-            creator_handle: account.username ?? "unknown",
-            campaign_name: match.campaignName,
-            required_keywords: match.requiredKeywords,
-            likes: v.like_count,
-            views: v.view_count,
-            comments: v.comment_count,
-            shares: v.share_count,
-            status: "pending",
-          },
-          { onConflict: "video_id,campaign_id" }
-        );
-        totalJobsFired++;
-      }
-    }
-
-    res.json({
-      message: "Synced successfully",
-      synced: rows.length,
-      campaignMatches: totalJobsFired,
-    });
-  } catch (err: any) {
-    console.error("TikTok sync error:", err.message);
-    res.status(500).json({ error: err.message });
-  }
+  res.json({ message: result.message, synced: result.synced, campaignMatches: result.campaignMatches });
 });
 
 // GET /analytics/tiktok/campaign-matched — ONLY videos that matched at least one
@@ -206,6 +111,40 @@ router.get("/tiktok", requireAuth, async (req, res: Response) => {
       },
       posts: postsWithAnalysis,
     },
+  });
+});
+
+// GET /analytics/tiktok/insights — Analytics Overview's "Performance" list +
+// "Zerra Insight" + "Where Your Influence Fit" cards. Every field is either
+// real (derived from synced posts) or null — never a placeholder example.
+// See lib/analyticsInsights.ts for the actual computation.
+router.get("/tiktok/insights", requireAuth, async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+
+  const posts = await getClassifiedPosts(user.id);
+
+  if (posts.length === 0) {
+    res.json({
+      bestPlatform: null,
+      bestFormat: null,
+      bestTime: null,
+      performanceInsight: null,
+      influenceFit: null,
+    });
+    return;
+  }
+
+  const [performanceInsight, influenceFit] = await Promise.all([
+    Promise.resolve(computePerformanceInsight(posts)),
+    computeInfluenceFit(posts),
+  ]);
+
+  res.json({
+    bestPlatform: "TikTok",  // trivially true today — the only platform with persisted posts
+    bestFormat: "Video",     // trivially true for TikTok
+    bestTime: computeBestTimeWindow(posts),
+    performanceInsight,
+    influenceFit,
   });
 });
 

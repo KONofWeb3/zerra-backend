@@ -8,6 +8,7 @@ import {
   getTikTokUser,
 } from "../lib/tiktok";
 import { calculateAndStoreInfluenceScore } from "../lib/scoringData";
+import { syncTikTokPosts } from "../lib/syncTikTok";
 import crypto from "crypto";
 
 const router = Router();
@@ -161,8 +162,18 @@ router.get("/tt/callback", async (req: Request, res: Response) => {
       console.error("Failed to update users.tiktok_username:", usersError.message);
     }
 
+    // Sync their videos immediately — previously this only ever ran from a
+    // manual "Sync" button on an unrelated page, so Analytics stayed on
+    // "No data yet, sync first" forever unless someone found that button.
+    try {
+      await syncTikTokPosts(user.id);
+    } catch (err: any) {
+      console.error("Failed to sync TikTok posts after connect:", err.message);
+    }
+
     // Calculate the Influence Rating now, before redirecting, so it's
-    // already non-zero by the time the frontend lands back on Settings.
+    // already non-zero (and reflects real engagement, not just followers)
+    // by the time the frontend lands back on Settings.
     try {
       await calculateAndStoreInfluenceScore(user.id);
     } catch (err: any) {

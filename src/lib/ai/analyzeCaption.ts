@@ -63,11 +63,7 @@ Return ONLY JSON, no preamble, no markdown fences:
   }
 }
 
-/**
- * Retry wrapper — per spec's error handling rule:
- * "If Claude API fails — retry once after 5 seconds. If it fails again,
- *  set authenticity_score to null and flag video as pending review."
- */
+/** Retries once after 5s on failure; returns null (caller flags the video for review) if it fails again. */
 export async function analyzeCaptionWithRetry(
   text: string,
   campaignName: string,

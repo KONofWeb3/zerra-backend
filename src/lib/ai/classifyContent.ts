@@ -1,15 +1,10 @@
 // src/lib/ai/classifyContent.ts
 //
 // Content-topic classification for the Analytics "Zerra Insight" and
-// "Where Your Influence Fit" cards. Same Anthropic client pattern as
-// analyzeCaption.ts. Uses a FIXED taxonomy — not free-text — so a post's
-// topic and a campaign's topic can be compared with plain string equality
-// instead of fuzzy-matching whatever wording Claude happens to pick.
-//
-// This is best-effort analytics enrichment, not a verification gate like
-// the campaign pipeline: a failed or malformed classification falls back
-// to "Other" rather than throwing, so one bad post never breaks the whole
-// insights computation.
+// "Where Your Influence Fit" cards. Uses a fixed taxonomy so a post's
+// topic and a campaign's topic can be compared by plain string equality.
+// A failed or malformed classification falls back to "Other" rather than
+// throwing — this is analytics enrichment, not a verification gate.
 
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -41,7 +36,6 @@ function parseJson(raw: string): any | null {
   }
 }
 
-/** Classifies one TikTok post's topic + content style from its caption/title. */
 export async function classifyPostContent(caption: string, title: string): Promise<{ topic: Topic; style: Style }> {
   const text = [title, caption].filter(Boolean).join(" — ").slice(0, 2000);
   if (!text.trim()) return FALLBACK;
@@ -78,7 +72,6 @@ Content: "${text}"
   }
 }
 
-/** Classifies one campaign's topic from its name/description/hashtags, for creator/campaign matching. */
 export async function classifyCampaignTopic(campaign: {
   project_name: string;
   description?: string | null;

@@ -30,7 +30,7 @@ router.get("/social-accounts", requireAuth, async (req, res: Response) => {
 
   const { data, error } = await supabase
     .from("social_accounts")
-    .select("id, platform, username, expires_at, created_at")
+    .select("id, platform, username, follower_count, expires_at, created_at")
     .eq("user_id", user.id);
 
   if (error) {
@@ -60,12 +60,12 @@ router.delete("/social-accounts/:id", requireAuth, async (req, res: Response) =>
   res.json({ success: true });
 });
 
-// PUT /me/profile — update name, username
+// PUT /me/profile — update name, username, bio, location, niche
 router.put("/profile", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;
-  const { name, username } = req.body;
+  const { name, username, bio, location, niche } = req.body;
 
-  if (!name && !username) {
+  if (!name && !username && bio === undefined && location === undefined && niche === undefined) {
     res.status(400).json({ error: "Nothing to update" });
     return;
   }
@@ -86,8 +86,11 @@ router.put("/profile", requireAuth, async (req, res: Response) => {
   }
 
   const updates: Record<string, string> = {};
-  if (name)     updates.name     = name.trim();
-  if (username) updates.username = username.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
+  if (name)                 updates.name     = name.trim();
+  if (username)             updates.username = username.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
+  if (bio !== undefined)      updates.bio      = String(bio).trim().slice(0, 280);
+  if (location !== undefined) updates.location = String(location).trim().slice(0, 100);
+  if (niche !== undefined)    updates.niche    = String(niche).trim().slice(0, 50);
 
   const { data, error } = await supabase
     .from("users")
@@ -170,7 +173,6 @@ router.put("/password", requireAuth, async (req, res: Response) => {
   res.json({ success: true });
 });
 
-// Add this route to src/routes/me.ts
 // GET /me/tiktok-status — quick check if the user has TikTok connected
 router.get("/tiktok-status", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;
@@ -184,8 +186,6 @@ router.get("/tiktok-status", requireAuth, async (req, res: Response) => {
 
   res.json({ connected: !!data });
 });
-
-
 
 // GET /me/joined-campaigns — IDs of campaigns this user has joined
 router.get("/joined-campaigns", requireAuth, async (req, res: Response) => {
@@ -226,8 +226,6 @@ router.get("/campaigns", requireAuth, async (req, res: Response) => {
 
   res.json({ campaigns });
 });
-
-
 
 // GET /me/influence-stats — score + eligible videos + campaigns, with 24h change
 router.get("/influence-stats", requireAuth, async (req, res: Response) => {
@@ -275,10 +273,8 @@ router.get("/influence-stats", requireAuth, async (req, res: Response) => {
   });
 });
 
-// GET /me/influence-rating — cross-platform social Influence Rating (100-1000),
-// computed by src/lib/scoringData.ts on connect and refreshed by
-// src/jobs/influenceScoreWorker.ts. Distinct from /me/influence-stats, which
-// is the per-campaign AI-verification leaderboard score — a different metric.
+// GET /me/influence-rating — cross-platform Influence Rating (100-1000).
+// Distinct from /me/influence-stats, which is the per-campaign leaderboard score.
 router.get("/influence-rating", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;
 
@@ -289,8 +285,6 @@ router.get("/influence-rating", requireAuth, async (req, res: Response) => {
     .single();
 
   if (error || !data) {
-    // No social account connected yet (or the initial calculation is still
-    // running) — never fabricate a 0, tell the frontend there's nothing yet.
     res.json({ calculated: false });
     return;
   }
@@ -332,11 +326,8 @@ router.put("/wallet", requireAuth, async (req, res: Response) => {
   res.json({ user: data });
 });
 
-// Replace the /badges and /badges/:id/claim routes in src/routes/me.ts
-// with these two — now enforces follower-count eligibility for
-// 'verified-influencer' server-side, instead of trusting the client.
-
-// GET /me/badges
+// GET /me/badges — enforces follower-count eligibility for
+// 'verified-influencer' server-side, not just the client.
 router.get("/badges", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;
 
@@ -437,7 +428,6 @@ router.post("/badges/:id/claim", requireAuth, async (req, res: Response) => {
     },
   });
 });
-// Add to src/routes/me.ts before export default router
 
 // GET /me/referral — get this user's referral code, link, and stats
 router.get("/referral", requireAuth, async (req, res: Response) => {
@@ -485,7 +475,6 @@ router.get("/referral", requireAuth, async (req, res: Response) => {
     recentReferrals: recentReferrals ?? [],
   });
 });
-// Add to src/routes/me.ts before export default router
 
 // DELETE /me — permanently delete the logged-in user's account and all
 // associated data. Irreversible — the frontend must confirm with the
@@ -494,11 +483,8 @@ router.delete("/", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;
 
   try {
-    // Clean up owned data first. Most of these should already cascade
-    // via ON DELETE CASCADE foreign keys if your schema has them set up
-    // — but deleting explicitly here means this still works correctly
-    // even on tables where that constraint might be missing, and avoids
-    // leaving orphaned rows if any FK is set to SET NULL/RESTRICT instead.
+    // Explicit cleanup rather than relying on cascade — avoids orphaned
+    // rows on any table where the FK isn't set to ON DELETE CASCADE.
     await supabase.from("badge_claims").delete().eq("user_id", user.id);
     await supabase.from("claims").delete().eq("user_id", user.id);
     await supabase.from("social_accounts").delete().eq("user_id", user.id);

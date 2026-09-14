@@ -97,8 +97,6 @@ router.post("/:id/join", requireAuth, async (req: Request, res: Response) => {
   res.json({ success: true });
 });
 
-// Add to src/routes/bounties.ts (or a new leaderboard.ts router, mounted at /leaderboard)
-
 // GET /leaderboard — global leaderboard, summed across all campaigns per creator
 router.get("/leaderboard", async (_req: Request, res: Response) => {
   const { data: rows, error } = await supabase

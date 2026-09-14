@@ -15,6 +15,7 @@ import {
 } from "../lib/instagram";
 import { deleteFile } from "../lib/r2";
 import { calculateAndStoreInfluenceScore } from "../lib/scoringData";
+import { calculateAndStoreScorecard } from "../lib/creatorScorecard";
 import crypto from "crypto";
 
 const router = Router();
@@ -101,10 +102,9 @@ router.get("/callback", async (req: Request, res: Response) => {
       .update({ instagram_username: profile.username })
       .eq("id", user.id);
 
-    // Calculate the Influence Rating now, before redirecting, so it's
-    // already non-zero by the time the frontend lands back on Settings.
     try {
       await calculateAndStoreInfluenceScore(user.id);
+      await calculateAndStoreScorecard(user.id);
     } catch (err: any) {
       console.error("Failed to calculate influence score after Instagram connect:", err.message);
     }

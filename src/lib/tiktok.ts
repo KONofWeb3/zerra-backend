@@ -61,12 +61,6 @@ export async function exchangeTikTokCode(code: string): Promise<TikTokTokenRespo
   return data;
 }
 
-// Added follower_count to the requested fields — this is what powers the
-// Influencer Badge unlock logic on the frontend (accounts.find(a =>
-// a.platform === 'tiktok')?.follower_count). Requires user.info.stats scope,
-// which getTikTokAuthUrl already requests, so no re-auth/scope change needed
-// for existing connections — but EXISTING tokens issued before this field was
-// added may need a fresh reconnect to populate follower_count for the first time.
 export async function getTikTokUser(accessToken: string): Promise<{
   open_id: string;
   username: string;

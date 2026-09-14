@@ -1,21 +1,23 @@
 // src/jobs/influenceScoreWorker.ts
 //
-// Keeps every connected creator's Influence Rating fresh without requiring
-// them to reconnect or reload anything. Same polling-worker pattern as
+// Keeps every connected creator's Influence Rating AND Creator Scorecard
+// fresh — one worker, two calculations per creator per tick, rather than a
+// second background job for the scorecard. Same polling pattern as
 // verificationWorker.ts — runs on an interval inside the same Express
 // process, no external queue.
 
 import { supabase } from "../lib/supabase";
 import { calculateAndStoreInfluenceScore } from "../lib/scoringData";
+import { calculateAndStoreScorecard } from "../lib/creatorScorecard";
 
-const POLL_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
-const BATCH_SIZE = 25;                        // bound Instagram API calls per tick
-const STALE_AFTER_MS = 24 * 60 * 60 * 1000;   // recalculate once a score is a day old
+const POLL_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const BATCH_SIZE = 25;
+const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
-let isRunning = false; // simple lock so overlapping ticks can't double-process
+let isRunning = false;
 
 async function tick() {
-  if (isRunning) return; // previous tick still running, skip this one
+  if (isRunning) return;
   isRunning = true;
 
   try {
@@ -56,6 +58,7 @@ async function tick() {
     for (const creatorId of due) {
       try {
         await calculateAndStoreInfluenceScore(creatorId);
+        await calculateAndStoreScorecard(creatorId);
       } catch (err: any) {
         console.error(`Influence score worker: error scoring creator ${creatorId}:`, err.message);
       }
@@ -68,5 +71,5 @@ async function tick() {
 export function startInfluenceScoreWorker() {
   console.log(`⚙️  Influence score worker started — polling every ${POLL_INTERVAL_MS / 1000 / 60 / 60}h`);
   setInterval(tick, POLL_INTERVAL_MS);
-  tick(); // run once immediately on startup too
+  tick();
 }

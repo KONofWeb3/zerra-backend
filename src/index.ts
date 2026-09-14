@@ -12,6 +12,7 @@ import adminRouter from "./routes/admin";
 import projectRouter from "./routes/project";
 import instagramRouter from "./routes/instagram";
 import uploadRouter from "./routes/upload";
+import creatorsRouter from "./routes/creators";
 import { startVerificationWorker } from "./jobs/verificationWorker";
 import { startInfluenceScoreWorker } from "./jobs/influenceScoreWorker";
 
@@ -63,6 +64,7 @@ app.use("/admin", adminRouter);
 app.use("/project", projectRouter);
 app.use("/auth/instagram", instagramRouter);
 app.use("/upload", uploadRouter);
+app.use("/creators", creatorsRouter);
 
 async function startServer() {
   const { error } = await supabase.from("users").select("id").limit(1);
@@ -78,12 +80,8 @@ async function startServer() {
     console.log(`🚀 Zerra backend running on port ${PORT}`);
   });
 
-  // Start the in-process verification worker — replaces Inngest entirely.
-  // Polls video_analysis for 'pending' rows every 30s and processes them.
   startVerificationWorker();
 
-  // Keeps every connected creator's Influence Rating fresh (see
-  // src/lib/scoringData.ts for the immediate on-connect calculation).
   startInfluenceScoreWorker();
 }
 

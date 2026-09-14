@@ -7,7 +7,14 @@ import {
   exchangeTikTokCode,
   getTikTokUser,
 } from "../lib/tiktok";
+import {
+  getTwitterAuthUrl,
+  exchangeTwitterCode,
+  getTwitterUser,
+  generatePkcePair,
+} from "../lib/twitter";
 import { calculateAndStoreInfluenceScore } from "../lib/scoringData";
+import { calculateAndStoreScorecard } from "../lib/creatorScorecard";
 import { syncTikTokPosts } from "../lib/syncTikTok";
 import crypto from "crypto";
 
@@ -23,6 +30,23 @@ router.get("/tiktok", requireAuth, (req: Request, res: Response) => {
   ).toString("base64");
 
   const url = getTikTokAuthUrl(state);
+  res.redirect(url);
+});
+
+// GET /auth/twitter — redirect user to X's login. Needs TWITTER_CLIENT_ID/
+// TWITTER_CLIENT_SECRET/TWITTER_REDIRECT_URI from a real X Developer App —
+// not registered yet, so this will error until those exist.
+router.get("/twitter", requireAuth, (req: Request, res: Response) => {
+  const { codeVerifier, codeChallenge } = generatePkcePair();
+  const state = Buffer.from(
+    JSON.stringify({
+      token: req.query.token as string,
+      nonce: crypto.randomBytes(8).toString("hex"),
+      codeVerifier,
+    })
+  ).toString("base64");
+
+  const url = getTwitterAuthUrl(state, codeChallenge);
   res.redirect(url);
 });
 
@@ -162,20 +186,15 @@ router.get("/tt/callback", async (req: Request, res: Response) => {
       console.error("Failed to update users.tiktok_username:", usersError.message);
     }
 
-    // Sync their videos immediately — previously this only ever ran from a
-    // manual "Sync" button on an unrelated page, so Analytics stayed on
-    // "No data yet, sync first" forever unless someone found that button.
     try {
       await syncTikTokPosts(user.id);
     } catch (err: any) {
       console.error("Failed to sync TikTok posts after connect:", err.message);
     }
 
-    // Calculate the Influence Rating now, before redirecting, so it's
-    // already non-zero (and reflects real engagement, not just followers)
-    // by the time the frontend lands back on Settings.
     try {
       await calculateAndStoreInfluenceScore(user.id);
+      await calculateAndStoreScorecard(user.id);
     } catch (err: any) {
       console.error("Failed to calculate influence score after TikTok connect:", err.message);
     }
@@ -184,6 +203,68 @@ router.get("/tt/callback", async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error("TikTok callback error:", err.message);
     res.redirect(`${process.env.FRONTEND_URL}/settings?error=tiktok_failed`);
+  }
+});
+
+// GET /auth/tw/callback
+router.get("/tw/callback", async (req: Request, res: Response) => {
+  const { code, error, state } = req.query;
+
+  if (error || !code || !state) {
+    res.redirect(`${process.env.FRONTEND_URL}/settings?error=twitter_denied`);
+    return;
+  }
+
+  try {
+    const decoded = JSON.parse(Buffer.from(state as string, "base64").toString());
+    const token = decoded.token;
+    const codeVerifier = decoded.codeVerifier;
+
+    if (!token || !codeVerifier) {
+      res.redirect(`${process.env.FRONTEND_URL}/settings?error=twitter_failed`);
+      return;
+    }
+
+    const { data, error: authError } = await supabase.auth.getUser(token);
+    if (authError || !data.user) {
+      res.redirect(`${process.env.FRONTEND_URL}/settings?error=twitter_failed`);
+      return;
+    }
+
+    const user = data.user;
+
+    const tokens = await exchangeTwitterCode(code as string, codeVerifier);
+    const twitterUser = await getTwitterUser(tokens.access_token);
+
+    const { error: dbError } = await supabase
+      .from("social_accounts")
+      .upsert(
+        {
+          user_id:          user.id,
+          platform:         "twitter",
+          platform_user_id: twitterUser.id,
+          username:         twitterUser.username,
+          follower_count:   twitterUser.follower_count,
+          access_token:     tokens.access_token,
+          refresh_token:    tokens.refresh_token ?? null,
+          expires_at:       new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+        },
+        { onConflict: "user_id,platform" }
+      );
+
+    if (dbError) throw dbError;
+
+    try {
+      await calculateAndStoreInfluenceScore(user.id);
+      await calculateAndStoreScorecard(user.id);
+    } catch (err: any) {
+      console.error("Failed to calculate scores after Twitter connect:", err.message);
+    }
+
+    res.redirect(`${process.env.FRONTEND_URL}/settings?connected=twitter`);
+  } catch (err: any) {
+    console.error("Twitter callback error:", err.message);
+    res.redirect(`${process.env.FRONTEND_URL}/settings?error=twitter_failed`);
   }
 });
 

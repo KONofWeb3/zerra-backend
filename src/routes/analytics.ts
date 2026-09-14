@@ -9,8 +9,6 @@ const router = Router();
 
 // POST /analytics/tiktok/sync — fetch videos, save all to dashboard,
 // but only queue AI verification for videos matching an active campaign.
-// The actual logic lives in lib/syncTikTok.ts so it can also run
-// automatically right after a creator connects TikTok (see routes/auth.ts).
 router.post("/tiktok/sync", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;
   const result = await syncTikTokPosts(user.id);
@@ -57,7 +55,7 @@ router.get("/tiktok/campaign-matched", requireAuth, async (req, res: Response) =
   res.json({ posts: analyses });
 });
 
-// GET /analytics/tiktok — get stored analytics for logged in user, now includes verification data
+// GET /analytics/tiktok — stored analytics + verification data for the logged-in user
 router.get("/tiktok", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;
 
@@ -114,10 +112,8 @@ router.get("/tiktok", requireAuth, async (req, res: Response) => {
   });
 });
 
-// GET /analytics/tiktok/insights — Analytics Overview's "Performance" list +
-// "Zerra Insight" + "Where Your Influence Fit" cards. Every field is either
-// real (derived from synced posts) or null — never a placeholder example.
-// See lib/analyticsInsights.ts for the actual computation.
+// GET /analytics/tiktok/insights — Performance list + Zerra Insight +
+// Where Your Influence Fit cards. See lib/analyticsInsights.ts.
 router.get("/tiktok/insights", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;
 
@@ -140,8 +136,8 @@ router.get("/tiktok/insights", requireAuth, async (req, res: Response) => {
   ]);
 
   res.json({
-    bestPlatform: "TikTok",  // trivially true today — the only platform with persisted posts
-    bestFormat: "Video",     // trivially true for TikTok
+    bestPlatform: "TikTok",
+    bestFormat: "Video",
     bestTime: computeBestTimeWindow(posts),
     performanceInsight,
     influenceFit,

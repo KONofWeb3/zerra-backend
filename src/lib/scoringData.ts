@@ -1,9 +1,8 @@
 // src/lib/scoringData.ts
 //
-// Assembles the raw per-platform inputs the Influence Rating engine needs,
-// then orchestrates a full calculate-and-store pass for one creator.
-// This is the single entry point called both on-connect (immediate,
-// non-zero rating) and from the background recalculation worker.
+// Assembles per-platform inputs for the Influence Rating engine and
+// orchestrates a calculate-and-store pass for one creator. Called both
+// on-connect and from the background recalculation worker.
 
 import { supabase } from "./supabase";
 import { getIGMedia } from "./instagram";
@@ -21,9 +20,6 @@ interface PlatformScoringInput extends PlatformPillarScores {
   postsConsidered: number;
 }
 
-// ── TikTok ───────────────────────────────────────────────────────────────
-// Reads only already-persisted data (social_accounts + tiktok_posts) — no
-// live API call, no risk of hitting TikTok's rate limits from a background job.
 async function getTikTokScoringInput(userId: string): Promise<PlatformScoringInput | null> {
   const { data: account } = await supabase
     .from("social_accounts")
@@ -67,11 +63,8 @@ async function getTikTokScoringInput(userId: string): Promise<PlatformScoringInp
   };
 }
 
-// ── Instagram ────────────────────────────────────────────────────────────
-// Follower count is already persisted (from connect), but post-level
-// engagement isn't stored anywhere yet — pull it live via the existing
-// getIGMedia() call (≤25 posts, cheap). Instagram's API doesn't expose
-// per-post shares or views at all, so those stay null throughout, not 0.
+// Instagram's API doesn't expose per-post shares or views, so those stay
+// null (not 0) all the way through the scoring math.
 async function getInstagramScoringInput(userId: string): Promise<PlatformScoringInput | null> {
   const { data: account } = await supabase
     .from("social_accounts")
@@ -86,8 +79,6 @@ async function getInstagramScoringInput(userId: string): Promise<PlatformScoring
   try {
     media = await getIGMedia(account.platform_user_id, account.access_token);
   } catch (err: any) {
-    // Expired/revoked token, rate limit, etc. — don't let one bad platform
-    // crash the whole score calc; just score off what we already have.
     console.warn(`Influence score: failed to fetch Instagram media for user ${userId}:`, err.message);
   }
 
@@ -102,18 +93,12 @@ async function getInstagramScoringInput(userId: string): Promise<PlatformScoring
   return {
     followers,
     audience: audienceScore(followers),
-    engagement: engagementScore({
-      engagementRatePct,
-      avgLikes,
-      avgComments,
-      avgShares: null, // Instagram Graph API doesn't expose shares
-    }),
+    engagement: engagementScore({ engagementRatePct, avgLikes, avgComments, avgShares: null }),
     impact: impactScore({ totalLikes, totalViews: null, totalComments, totalShares: null }),
     postsConsidered,
   };
 }
 
-// ── Orchestrator ─────────────────────────────────────────────────────────
 export async function calculateAndStoreInfluenceScore(creatorId: string): Promise<void> {
   const [tiktok, instagram] = await Promise.all([
     getTikTokScoringInput(creatorId),
@@ -121,13 +106,7 @@ export async function calculateAndStoreInfluenceScore(creatorId: string): Promis
   ]);
 
   const platforms = [tiktok, instagram].filter((p): p is PlatformScoringInput => p !== null);
-
-  if (platforms.length === 0) {
-    // No connected account with usable data — nothing honest to score yet.
-    // Never write a fabricated 0; just skip (the /me/influence-rating route
-    // returns { calculated: false } until a real row exists).
-    return;
-  }
+  if (platforms.length === 0) return;
 
   const combined = combinePlatformScores(platforms);
   const rating = finalRating(combined.audience, combined.engagement, combined.impact);
@@ -151,9 +130,6 @@ export async function calculateAndStoreInfluenceScore(creatorId: string): Promis
   if (existing) {
     const staleSince24h = new Date(existing.calculated_at).getTime() < now.getTime() - 24 * 60 * 60 * 1000;
     if (staleSince24h) {
-      // Only shift the 24h snapshot forward once a day — otherwise a job
-      // that ticks every few hours would keep comparing against itself
-      // and the "24h change" would never mean what it says.
       previousScore = existing.score;
       scoreChange24h = existing.score > 0 ? ((rating - existing.score) / existing.score) * 100 : 0;
     }
@@ -183,7 +159,6 @@ export async function calculateAndStoreInfluenceScore(creatorId: string): Promis
     return;
   }
 
-  // Percentile — cheap at current scale; revisit if the creator table grows large.
   const [{ count: countLessEq }, { count: totalCount }] = await Promise.all([
     supabase.from("creator_influence_scores").select("id", { count: "exact", head: true }).lte("score", rating),
     supabase.from("creator_influence_scores").select("id", { count: "exact", head: true }),

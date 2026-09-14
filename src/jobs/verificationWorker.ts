@@ -1,9 +1,7 @@
 // src/jobs/verificationWorker.ts
 //
-// Polling-based replacement for the Inngest pipeline. Runs on an interval
-// inside the same Express process — no external service, no webhook,
-// no signing keys. Picks up 'pending' rows from video_analysis and
-// processes them through the same verification logic as before.
+// Polls 'pending' rows from video_analysis on an interval inside the same
+// Express process — no external queue, no webhook, no signing keys.
 
 import { supabase } from "../lib/supabase";
 import { analyzeCaptionWithRetry } from "../lib/ai/analyzeCaption";

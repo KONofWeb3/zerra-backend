@@ -1,10 +1,8 @@
 // src/lib/analyticsInsights.ts
 //
-// Computes the "Zerra Insight" and "Where Your Influence Fit" cards, plus
-// the Performance card's Best Platform/Format/Time rows, for the Analytics
-// Overview tab. Everything here is derived from real synced data — a
-// result is `null` whenever there isn't enough signal yet, never a
-// plausible-looking placeholder.
+// Computes the Analytics Overview tab's Performance list, Zerra Insight,
+// and Where Your Influence Fit cards. A result is null whenever there
+// isn't enough signal yet — never a placeholder value.
 
 import { supabase } from "./supabase";
 import { classifyPostContent, classifyCampaignTopic, type Topic } from "./ai/classifyContent";
@@ -28,7 +26,6 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
-/** Reads a creator's tiktok_posts, lazily classifying (and caching) any post missing a topic/style. */
 export async function getClassifiedPosts(userId: string): Promise<ClassifiedPost[]> {
   const { data: posts } = await supabase
     .from("tiktok_posts")
@@ -57,7 +54,8 @@ interface BestTopic {
   topPost: ClassifiedPost;
 }
 
-/** The creator's single best-performing topic, requiring at least 2 posts so one video can't look like a trend. "Other" is excluded — it's a catch-all, not a real signal to headline. */
+// Requires at least 2 posts in a topic so one video can't look like a trend.
+// "Other" is excluded — it's a catch-all, not a real signal.
 function computeBestTopic(posts: ClassifiedPost[]): BestTopic | null {
   const overallAvg = posts.length > 0
     ? posts.reduce((s, p) => s + Number(p.engagement_rate || 0), 0) / posts.length
@@ -133,9 +131,9 @@ function formatHour12(h: number): { label: string; period: "AM" | "PM" } {
   return { label: String(hour12), period };
 }
 
-/** Best 2-hour posting window by summed views, bucketed by UTC hour-of-day.
- *  Known limitation: not creator-timezone-aware. Returns null until at least
- *  3 posts have a real created_time (i.e. synced since this field was added). */
+// Best 2-hour posting window by summed views, bucketed by UTC hour-of-day.
+// Not creator-timezone-aware. Returns null until at least 3 posts have a
+// real created_time.
 export function computeBestTimeWindow(posts: ClassifiedPost[]): string | null {
   const withTime = posts.filter((p) => p.created_time);
   if (withTime.length < 3) return null;

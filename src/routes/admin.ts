@@ -86,10 +86,7 @@ router.post("/campaigns", async (req, res: Response) => {
         return;
       }
 
-      // Upsert the users row with role = 'project'.
-      // Using upsert (not update) because Supabase's auth trigger that creates the
-      // users row may not have fired yet at this point — upsert ensures it exists
-      // regardless of trigger timing.
+      // Upsert, not update — the auth trigger that creates this users row may not have fired yet.
       await supabase
         .from("users")
         .upsert(
@@ -313,10 +310,8 @@ router.put("/users/:id/ban", async (req, res: Response) => {
     return;
   }
 
-  // Also revoke their Supabase session so they're kicked out immediately
-  await supabase.auth.admin.deleteUser(id, false); // false = don't hard-delete, just revoke sessions
-  // Note: depending on Supabase version, you may need signOut via admin API instead —
-  // verify this behaves as "revoke session" not "delete account" before relying on it.
+  // Revokes their session; `false` means soft — don't delete the account.
+  await supabase.auth.admin.deleteUser(id, false);
 
   await logAdminAction(admin.id, "ban_user", "user", id, reason);
   res.json({ success: true });
@@ -413,9 +408,6 @@ router.get("/trending-videos", async (_req, res: Response) => {
   res.json({ videos: data });
 });
 
-export default router;
-// Add to src/routes/admin.ts before export default router
-
 // GET /admin/users/:id/full — complete profile for one user, for the admin detail view
 router.get("/users/:id/full", async (req, res: Response) => {
   const { id } = req.params;
@@ -437,7 +429,6 @@ router.get("/users/:id/full", async (req, res: Response) => {
     .select("platform, username, created_at, expires_at")
     .eq("user_id", id);
 
-  // Wallet info (assuming users table has wallet_address/chain, per earlier wallet feature)
   const walletInfo = {
     address: user.wallet_address ?? null,
     chain: user.wallet_chain ?? null,
@@ -541,3 +532,5 @@ router.get("/audit-log", async (_req, res: Response) => {
 
   res.json({ actions: data ?? [] });
 });
+
+export default router;

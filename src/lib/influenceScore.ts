@@ -1,28 +1,19 @@
 // src/lib/influenceScore.ts
 //
-// Pure scoring math for the cross-platform "Influence Rating". No DB or
-// network calls here — see scoringData.ts for how raw platform data gets
-// turned into the inputs these functions expect.
-//
-// Formula (three pillars — Audience Quality was dropped: neither TikTok's
-// nor Instagram's API exposes who's engaging with a creator, so there's no
-// honest data source for it):
+// Scoring math for the cross-platform Influence Rating.
 //
 //   FinalScore(0-100) = audience*0.35 + engagement*0.45 + impact*0.20
-//   Rating             = 100 + FinalScore * 9   → range 100-1000
+//   Rating             = 100 + FinalScore * 9   -> range 100-1000
 //
-// Every log-scaled term uses log10(x+1) against a fixed reference ceiling,
-// so growth has diminishing returns (1K→10K followers matters far more
-// than 1M→1.1M) without ever going negative or needing real-time
-// percentile data to normalize against.
+// Log-scaled terms use log10(x+1) against a fixed ceiling so growth has
+// diminishing returns (1K->10K followers matters far more than 1M->1.1M).
 
 function logScale(value: number, ceiling: number): number {
   const scaled = Math.log10(Math.max(0, value) + 1) / Math.log10(ceiling + 1);
   return Math.min(100, Math.max(0, scaled * 100));
 }
 
-/** Redistribute a null term's weight proportionally across the remaining terms,
- *  instead of treating missing platform data (e.g. Instagram has no share count) as zero. */
+/** Redistributes a null term's weight across the remaining terms instead of scoring it as zero. */
 function redistributeWeights(
   weights: Record<string, number>,
   nullKeys: string[]
@@ -38,17 +29,15 @@ function redistributeWeights(
   return result;
 }
 
-// ── Audience — 25% of the original spec's weighting, rebalanced to 35% ────
 export function audienceScore(followers: number): number {
   return Math.round(logScale(followers, 10_000_000));
 }
 
-// ── Engagement — rebalanced to 45% ─────────────────────────────────────────
 export interface EngagementInput {
-  engagementRatePct: number;     // 0-100
+  engagementRatePct: number;
   avgLikes: number;
   avgComments: number;
-  avgShares: number | null;      // null on platforms that don't expose shares (Instagram)
+  avgShares: number | null; // null on platforms that don't expose shares (Instagram)
 }
 
 const ENGAGEMENT_WEIGHTS = { rate: 0.39, likes: 0.28, comments: 0.22, shares: 0.11 };
@@ -61,7 +50,7 @@ export function engagementScore({ engagementRatePct, avgLikes, avgComments, avgS
     ? redistributeWeights(ENGAGEMENT_WEIGHTS, ["shares"])
     : ENGAGEMENT_WEIGHTS;
 
-  const rateTerm     = Math.min(100, (engagementRatePct / 15) * 100); // 15%+ engagement rate = maxed
+  const rateTerm     = Math.min(100, (engagementRatePct / 15) * 100);
   const likesTerm     = logScale(avgLikes, AVG_LIKES_CEILING);
   const commentsTerm  = logScale(avgComments, AVG_COMMENTS_CEILING);
   const sharesTerm    = avgShares === null ? 0 : logScale(avgShares, AVG_SHARES_CEILING);
@@ -75,12 +64,11 @@ export function engagementScore({ engagementRatePct, avgLikes, avgComments, avgS
   return Math.round(Math.min(100, Math.max(0, score)));
 }
 
-// ── Impact — rebalanced to 20% ──────────────────────────────────────────────
 export interface ImpactInput {
   totalLikes: number;
-  totalViews: number | null;     // null on platforms that don't expose per-post views (Instagram)
+  totalViews: number | null;
   totalComments: number;
-  totalShares: number | null;    // null on platforms that don't expose shares (Instagram)
+  totalShares: number | null;
 }
 
 const IMPACT_WEIGHTS = { likes: 0.4, views: 0.3, comments: 0.15, shares: 0.15 };
@@ -109,7 +97,6 @@ export function impactScore({ totalLikes, totalViews, totalComments, totalShares
   return Math.round(Math.min(100, Math.max(0, score)));
 }
 
-// ── Combining platforms ──────────────────────────────────────────────────
 export interface PlatformPillarScores {
   followers: number;
   audience: number;
@@ -117,11 +104,7 @@ export interface PlatformPillarScores {
   impact: number;
 }
 
-// Multi-platform creators get each pillar blended by follower-weighted
-// average (their bigger platform counts for more) — not a modeled
-// "shared audience" adjustment. Good enough for two platforms; revisit if
-// a creator with heavily overlapping audiences across many platforms
-// turns out to be a real problem.
+// Multi-platform creators get each pillar blended by follower-weighted average.
 export function combinePlatformScores(platforms: PlatformPillarScores[]): {
   audience: number; engagement: number; impact: number;
 } {
@@ -141,7 +124,6 @@ export function combinePlatformScores(platforms: PlatformPillarScores[]): {
   };
 }
 
-// ── Final rating ─────────────────────────────────────────────────────────
 const PILLAR_WEIGHTS = { audience: 0.35, engagement: 0.45, impact: 0.20 };
 
 export function finalRating(audience: number, engagement: number, impact: number): number {
@@ -153,10 +135,7 @@ export function finalRating(audience: number, engagement: number, impact: number
   return Math.round(Math.min(1000, Math.max(100, 100 + finalScore * 9)));
 }
 
-// ── Confidence ───────────────────────────────────────────────────────────
-// 10+ posts considered = full confidence; fewer = proportionally lower.
-// A brand-new connect with 0 posts still gets a real rating off audience
-// alone — this just tells the frontend how much to trust it.
+// 10+ posts considered = full confidence; fewer scales down proportionally.
 export function confidenceScore(postsConsidered: number): number {
   return Math.min(100, Math.round((postsConsidered / 10) * 100));
 }

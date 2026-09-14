@@ -1,14 +1,9 @@
 // src/lib/syncTikTok.ts
 //
 // Fetches a creator's TikTok videos and upserts them into tiktok_posts,
-// queuing AI verification for any that match an active campaign. Extracted
-// out of routes/analytics.ts so it can be called both from the manual
-// POST /analytics/tiktok/sync route AND automatically right after a
-// creator connects TikTok — previously that route was the ONLY place this
-// ever ran, so anyone who never visited Influence → Top Performing (the
-// only page with a "Sync" button) had an empty tiktok_posts table forever,
-// leaving Analytics stuck on "No data yet, sync first" and the Influence
-// Rating's TikTok engagement/impact pillars stuck at 0.
+// queuing AI verification for any that match an active campaign. Used by
+// both the manual POST /analytics/tiktok/sync route and the automatic
+// sync right after a creator connects TikTok (routes/auth.ts).
 
 import { supabase } from "./supabase";
 import { getTikTokVideos } from "./tiktok";
@@ -64,8 +59,6 @@ export async function syncTikTokPosts(userId: string): Promise<SyncTikTokResult>
       };
     });
 
-    // Save ALL videos to dashboard — creator's own analytics page shows everything,
-    // campaign matching only gates AI verification + leaderboard eligibility
     const { error: upsertError } = await supabase
       .from("tiktok_posts")
       .upsert(rows, { onConflict: "user_id,post_id" });
@@ -74,15 +67,13 @@ export async function syncTikTokPosts(userId: string): Promise<SyncTikTokResult>
       return { ok: false, status: 500, error: upsertError.message };
     }
 
-    // Filter: only fire AI verification for videos that match an active campaign's
-    // hashtags/keywords.
     let totalJobsFired = 0;
 
     for (const v of videos as TikTokVideo[]) {
       const caption = v.video_description || v.title || "";
       const matches = await matchCampaigns(caption);
 
-      if (matches.length === 0) continue; // no campaign relevance — skip AI analysis entirely
+      if (matches.length === 0) continue;
 
       for (const match of matches) {
         await supabase.from("video_analysis").upsert(

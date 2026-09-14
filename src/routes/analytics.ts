@@ -146,14 +146,23 @@ router.get("/tiktok/insights", requireAuth, async (req, res: Response) => {
 
 // GET /analytics/top-creators — ranked list, now sorted by verified final_score where available
 router.get("/top-creators", async (_req, res: Response) => {
+  // This previously embedded social_accounts directly off tiktok_posts. There
+  // is no FK between those two tables (both point at users), so PostgREST
+  // rejected the entire request with "Could not find a relationship ... in the
+  // schema cache" and the endpoint always 500'd. It also never selected the
+  // metric columns it then summed, so every total would have been 0 even if
+  // the join had worked. Handles are now fetched separately and merged.
   const { data, error } = await supabase
     .from("tiktok_posts")
     .select(`
       user_id,
-      users ( name, avatar ),
-      social_accounts!inner ( username, platform )
-    `)
-    .eq("social_accounts.platform", "tiktok");
+      view_count,
+      like_count,
+      comment_count,
+      share_count,
+      engagement_rate,
+      users ( name, avatar )
+    `);
 
   if (error) {
     res.status(500).json({ error: error.message });
@@ -167,9 +176,9 @@ router.get("/top-creators", async (_req, res: Response) => {
     if (!creatorMap.has(uid)) {
       creatorMap.set(uid, {
         user_id: uid,
-        name: row.users?.name,
-        avatar: row.users?.avatar,
-        username: row.social_accounts?.username,
+        name: row.users?.name ?? null,
+        avatar: row.users?.avatar ?? null,
+        username: null as string | null,
         total_views: 0,
         total_likes: 0,
         total_comments: 0,
@@ -188,8 +197,21 @@ router.get("/top-creators", async (_req, res: Response) => {
     creator.engagement_rates.push(Number(row.engagement_rate || 0));
   }
 
-  // Pull leaderboard totals (AI-verified scores) for these creators
   const userIds = Array.from(creatorMap.keys());
+
+  // TikTok handles, fetched separately since there's no direct FK to join on
+  const { data: handleRows } = await supabase
+    .from("social_accounts")
+    .select("user_id, username")
+    .eq("platform", "tiktok")
+    .in("user_id", userIds);
+
+  for (const row of handleRows ?? []) {
+    const creator = creatorMap.get(row.user_id);
+    if (creator) creator.username = row.username ?? null;
+  }
+
+  // Pull leaderboard totals (AI-verified scores) for these creators
   const { data: leaderboardRows } = await supabase
     .from("leaderboard")
     .select("creator_id, total_score")

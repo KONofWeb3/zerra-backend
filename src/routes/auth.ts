@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { requireAuth } from "../middleware/requireAuth";
 import { supabase } from "../lib/supabase";
+import { isDuplicateSocialAccountError } from "../lib/socialAccountConflict";
 import { AuthRequest } from "../types";
 import {
   getTikTokAuthUrl,
@@ -175,7 +176,13 @@ router.get("/tt/callback", async (req: Request, res: Response) => {
         { onConflict: "user_id,platform" }
       );
 
-    if (dbError) throw dbError;
+    if (dbError) {
+      if (isDuplicateSocialAccountError(dbError)) {
+        res.redirect(`${process.env.FRONTEND_URL}/settings?error=tiktok_already_linked`);
+        return;
+      }
+      throw dbError;
+    }
 
     const { error: usersError } = await supabase
       .from("users")
@@ -252,7 +259,13 @@ router.get("/tw/callback", async (req: Request, res: Response) => {
         { onConflict: "user_id,platform" }
       );
 
-    if (dbError) throw dbError;
+    if (dbError) {
+      if (isDuplicateSocialAccountError(dbError)) {
+        res.redirect(`${process.env.FRONTEND_URL}/settings?error=twitter_already_linked`);
+        return;
+      }
+      throw dbError;
+    }
 
     try {
       await calculateAndStoreInfluenceScore(user.id);

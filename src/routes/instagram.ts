@@ -14,6 +14,7 @@ import {
   publishIGMedia,
 } from "../lib/instagram";
 import { deleteFile } from "../lib/r2";
+import { isDuplicateSocialAccountError } from "../lib/socialAccountConflict";
 import { calculateAndStoreInfluenceScore } from "../lib/scoringData";
 import { calculateAndStoreScorecard } from "../lib/creatorScorecard";
 import crypto from "crypto";
@@ -94,7 +95,13 @@ router.get("/callback", async (req: Request, res: Response) => {
         { onConflict: "user_id,platform" }
       );
 
-    if (dbError) throw dbError;
+    if (dbError) {
+      if (isDuplicateSocialAccountError(dbError)) {
+        res.redirect(`${frontendUrl}/settings?error=instagram_already_linked`);
+        return;
+      }
+      throw dbError;
+    }
 
     // Also store username on users table for quick display in sidebar
     await supabase

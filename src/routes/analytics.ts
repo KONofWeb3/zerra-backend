@@ -229,9 +229,15 @@ router.get("/top-creators", async (_req, res: Response) => {
       verified_score: scoreMap.get(c.user_id) ?? 0,
       engagement_rates: undefined,
     }))
-    // Sort by verified_score first (AI-verified leaderboard), fall back to engagement rate
-    // for creators who haven't completed verification yet
+    // Sort by actual reach (total_views) first - that's what "Top Creators" means
+    // to anyone looking at this list. verified_score defaults to 0 for anyone who
+    // hasn't completed an AI-verified campaign yet, so sorting on it primarily was
+    // ranking small test accounts above creators with tens of millions of real
+    // followers just because they'd never run a verified campaign. Score and
+    // engagement rate are still shown as their own columns, just not the primary
+    // rank driver.
     .sort((a, b) => {
+      if (b.total_views !== a.total_views) return b.total_views - a.total_views;
       if (b.verified_score !== a.verified_score) return b.verified_score - a.verified_score;
       return b.avg_engagement_rate - a.avg_engagement_rate;
     });

@@ -52,6 +52,56 @@ router.get("/", async (req: Request, res: Response) => {
   res.json({ campaigns: [] });
 });
 
+// GET /bounties/leaderboard — the ZERRA leaderboard: points accumulated across
+// every campaign, per creator (the general reach/engagement board is
+// GET /analytics/top-creators).
+//
+// Must stay ABOVE "/:id". Express matches in declaration order, and while this
+// sat below it, "/:id" swallowed "leaderboard" as a campaign id and answered
+// "Campaign not found" - so this board never loaded. Users are fetched in a
+// second query rather than embedded, matching how top-creators had to be fixed.
+router.get("/leaderboard", async (_req: Request, res: Response) => {
+  const { data: rows, error } = await supabase
+    .from("leaderboard")
+    .select("creator_id, total_score");
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  const totals = new Map<string, { total_score: number; campaigns_count: number }>();
+  for (const row of rows ?? []) {
+    const t = totals.get(row.creator_id) ?? { total_score: 0, campaigns_count: 0 };
+    t.total_score += row.total_score ?? 0;
+    t.campaigns_count += 1;
+    totals.set(row.creator_id, t);
+  }
+
+  const ids = Array.from(totals.keys());
+  const { data: users } = ids.length
+    ? await supabase.from("users").select("id, name, avatar, username").in("id", ids)
+    : { data: [] as any[] };
+  const userMap = new Map((users ?? []).map((u: any) => [u.id, u]));
+
+  const leaderboard = ids
+    .map((id) => {
+      const u = userMap.get(id);
+      return {
+        creator_id: id,
+        name: u?.name ?? null,
+        avatar: u?.avatar ?? null,
+        username: u?.username ?? null,
+        ...totals.get(id)!,
+      };
+    })
+    .filter((e) => e.total_score > 0)
+    .sort((a, b) => b.total_score - a.total_score)
+    .slice(0, 100);
+
+  res.json({ leaderboard });
+});
+
 // GET /bounties/:id — single campaign
 router.get("/:id", async (req: Request, res: Response) => {
   const { id } = req.params;
@@ -95,51 +145,6 @@ router.post("/:id/join", requireAuth, async (req: Request, res: Response) => {
 
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json({ success: true });
-});
-
-// GET /leaderboard — global leaderboard, summed across all campaigns per creator
-router.get("/leaderboard", async (_req: Request, res: Response) => {
-  const { data: rows, error } = await supabase
-    .from("leaderboard")
-    .select(`
-      creator_id, total_score, campaign_id,
-      users:creator_id ( name, avatar ),
-      social_accounts:creator_id ( username )
-    `);
-
-  if (error) {
-    res.status(500).json({ error: error.message });
-    return;
-  }
-
-  // Aggregate total_score per creator across all their campaigns
-  const creatorMap = new Map<string, {
-    creator_id: string; name: string | null; avatar: string | null;
-    username: string | null; total_score: number; campaigns_count: number;
-  }>();
-
-  for (const row of rows ?? []) {
-    const existing = creatorMap.get(row.creator_id);
-    if (existing) {
-      existing.total_score += row.total_score ?? 0;
-      existing.campaigns_count += 1;
-    } else {
-      creatorMap.set(row.creator_id, {
-        creator_id: row.creator_id,
-        name: (row as any).users?.name ?? null,
-        avatar: (row as any).users?.avatar ?? null,
-        username: (row as any).social_accounts?.[0]?.username ?? null,
-        total_score: row.total_score ?? 0,
-        campaigns_count: 1,
-      });
-    }
-  }
-
-  const leaderboard = Array.from(creatorMap.values())
-    .sort((a, b) => b.total_score - a.total_score)
-    .slice(0, 100);
-
-  res.json({ leaderboard });
 });
 
 // GET /bounties/:id/leaderboard — leaderboard for ONE specific campaign

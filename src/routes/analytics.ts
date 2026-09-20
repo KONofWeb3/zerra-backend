@@ -144,14 +144,21 @@ router.get("/tiktok/insights", requireAuth, async (req, res: Response) => {
   });
 });
 
-// GET /analytics/top-creators — ranked list, now sorted by verified final_score where available
+// GET /analytics/top-creators — the GENERAL leaderboard. Raw, real metrics only:
+// followers, engagement rate, average engagement per post, reach. Zerra points
+// are a different board (GET /bounties/leaderboard).
+//
+// Ranking happens on the frontend (src/lib/generalScore.ts) so the hardcoded
+// showcase creators on the Top Creators page are scored by the exact same
+// formula as real ones. Default order here is followers, then views.
+//
+// History worth knowing: this used to embed social_accounts straight off
+// tiktok_posts, but there is no FK between those tables (both point at users),
+// so PostgREST rejected every request and the endpoint always 500d. It also
+// read a "global" leaderboard row (campaign_id IS NULL) that nothing ever
+// writes, so its verified_score was 0 for everyone. Both are gone; handles,
+// follower counts and Zerra usernames are fetched separately and merged.
 router.get("/top-creators", async (_req, res: Response) => {
-  // This previously embedded social_accounts directly off tiktok_posts. There
-  // is no FK between those two tables (both point at users), so PostgREST
-  // rejected the entire request with "Could not find a relationship ... in the
-  // schema cache" and the endpoint always 500'd. It also never selected the
-  // metric columns it then summed, so every total would have been 0 even if
-  // the join had worked. Handles are now fetched separately and merged.
   const { data, error } = await supabase
     .from("tiktok_posts")
     .select(`
@@ -178,7 +185,9 @@ router.get("/top-creators", async (_req, res: Response) => {
         user_id: uid,
         name: row.users?.name ?? null,
         avatar: row.users?.avatar ?? null,
-        username: null as string | null,
+        username: null as string | null,        // TikTok handle
+        zerra_username: null as string | null,  // users.username, for profile links
+        followers: null as number | null,       // summed across connected platforms
         total_views: 0,
         total_likes: 0,
         total_comments: 0,
@@ -199,26 +208,23 @@ router.get("/top-creators", async (_req, res: Response) => {
 
   const userIds = Array.from(creatorMap.keys());
 
-  // TikTok handles, fetched separately since there's no direct FK to join on
-  const { data: handleRows } = await supabase
-    .from("social_accounts")
-    .select("user_id, username")
-    .eq("platform", "tiktok")
-    .in("user_id", userIds);
+  const [{ data: accountRows }, { data: userRows }] = await Promise.all([
+    supabase.from("social_accounts").select("user_id, platform, username, follower_count").in("user_id", userIds),
+    supabase.from("users").select("id, username").in("id", userIds),
+  ]);
 
-  for (const row of handleRows ?? []) {
+  for (const row of accountRows ?? []) {
     const creator = creatorMap.get(row.user_id);
-    if (creator) creator.username = row.username ?? null;
+    if (!creator) continue;
+    if (row.platform === "tiktok") creator.username = row.username ?? null;
+    // null stays null when nothing reports a count - never coerced to 0
+    if (row.follower_count != null) creator.followers = (creator.followers ?? 0) + Number(row.follower_count);
   }
 
-  // Pull leaderboard totals (AI-verified scores) for these creators
-  const { data: leaderboardRows } = await supabase
-    .from("leaderboard")
-    .select("creator_id, total_score")
-    .in("creator_id", userIds)
-    .is("campaign_id", null); // global leaderboard entries
-
-  const scoreMap = new Map((leaderboardRows ?? []).map((r) => [r.creator_id, r.total_score]));
+  for (const row of userRows ?? []) {
+    const creator = creatorMap.get(row.id);
+    if (creator) creator.zerra_username = row.username ?? null;
+  }
 
   const creators = Array.from(creatorMap.values())
     .map((c) => ({
@@ -226,20 +232,13 @@ router.get("/top-creators", async (_req, res: Response) => {
       avg_engagement_rate: parseFloat(
         (c.engagement_rates.reduce((s: number, r: number) => s + r, 0) / c.engagement_rates.length).toFixed(2)
       ),
-      verified_score: scoreMap.get(c.user_id) ?? 0,
+      avg_engagement_per_post: Math.round((c.total_likes + c.total_comments + c.total_shares) / c.post_count),
       engagement_rates: undefined,
     }))
-    // Sort by actual reach (total_views) first - that's what "Top Creators" means
-    // to anyone looking at this list. verified_score defaults to 0 for anyone who
-    // hasn't completed an AI-verified campaign yet, so sorting on it primarily was
-    // ranking small test accounts above creators with tens of millions of real
-    // followers just because they'd never run a verified campaign. Score and
-    // engagement rate are still shown as their own columns, just not the primary
-    // rank driver.
     .sort((a, b) => {
-      if (b.total_views !== a.total_views) return b.total_views - a.total_views;
-      if (b.verified_score !== a.verified_score) return b.verified_score - a.verified_score;
-      return b.avg_engagement_rate - a.avg_engagement_rate;
+      const fa = a.followers ?? 0, fb = b.followers ?? 0;
+      if (fb !== fa) return fb - fa;
+      return b.total_views - a.total_views;
     });
 
   res.json({ creators });

@@ -187,6 +187,7 @@ router.get("/top-creators", async (_req, res: Response) => {
         avatar: row.users?.avatar ?? null,
         username: null as string | null,        // TikTok handle
         zerra_username: null as string | null,  // users.username, for profile links
+        niche: null as string | null,           // users.niche, picked in Settings
         followers: null as number | null,       // summed across connected platforms
         total_views: 0,
         total_likes: 0,
@@ -210,7 +211,7 @@ router.get("/top-creators", async (_req, res: Response) => {
 
   const [{ data: accountRows }, { data: userRows }] = await Promise.all([
     supabase.from("social_accounts").select("user_id, platform, username, follower_count").in("user_id", userIds),
-    supabase.from("users").select("id, username").in("id", userIds),
+    supabase.from("users").select("id, username, niche").in("id", userIds),
   ]);
 
   for (const row of accountRows ?? []) {
@@ -223,7 +224,10 @@ router.get("/top-creators", async (_req, res: Response) => {
 
   for (const row of userRows ?? []) {
     const creator = creatorMap.get(row.id);
-    if (creator) creator.zerra_username = row.username ?? null;
+    if (creator) {
+      creator.zerra_username = row.username ?? null;
+      creator.niche = row.niche ?? null;
+    }
   }
 
   const creators = Array.from(creatorMap.values())

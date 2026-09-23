@@ -13,6 +13,7 @@ import projectRouter from "./routes/project";
 import instagramRouter from "./routes/instagram";
 import uploadRouter from "./routes/upload";
 import creatorsRouter from "./routes/creators";
+import walletRouter from "./routes/wallet";
 import { startVerificationWorker } from "./jobs/verificationWorker";
 import { startInfluenceScoreWorker } from "./jobs/influenceScoreWorker";
 
@@ -65,6 +66,7 @@ app.use("/project", projectRouter);
 app.use("/auth/instagram", instagramRouter);
 app.use("/upload", uploadRouter);
 app.use("/creators", creatorsRouter);
+app.use("/wallet", walletRouter);
 
 async function startServer() {
   const { error } = await supabase.from("users").select("id").limit(1);

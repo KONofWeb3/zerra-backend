@@ -26,6 +26,14 @@ import { isTreasuryConfigured, getTreasuryBalanceUsdc, sendUsdc, TreasuryNotConf
 
 const router = Router();
 
+// Flat fee, covers the real Base network gas the treasury wallet pays to send
+// the transfer (paid in ETH, not USDC - this is what converts that into a
+// simple flat USDC amount instead of a live gas estimate). Deducted from the
+// requested amount, not added on top: a 500 USDC withdrawal request reduces
+// the balance by 500 and sends 499.90 on-chain. Exported so the balance route
+// can tell the frontend what "You receive" will actually be for a given amount.
+export const WITHDRAWAL_FEE_USDC = 0.10;
+
 interface Balance {
   available_to_withdraw: number;
   pending_rewards: number;
@@ -79,7 +87,11 @@ async function computeBalance(userId: string): Promise<Balance> {
 router.get("/balance", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;
   try {
-    res.json({ balance: await computeBalance(user.id), treasuryConfigured: isTreasuryConfigured() });
+    res.json({
+      balance: await computeBalance(user.id),
+      treasuryConfigured: isTreasuryConfigured(),
+      withdrawalFeeUsdc: WITHDRAWAL_FEE_USDC,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -145,6 +157,10 @@ router.post("/withdraw", requireAuth, async (req, res: Response) => {
     res.status(400).json({ error: "amount_usdc must be a positive number" });
     return;
   }
+  if (amount <= WITHDRAWAL_FEE_USDC) {
+    res.status(400).json({ error: `Amount must be more than the ${WITHDRAWAL_FEE_USDC} USDC network fee.` });
+    return;
+  }
 
   if (!isTreasuryConfigured()) {
     res.status(503).json({ error: "Withdrawals aren't turned on yet. Check back soon." });
@@ -184,9 +200,18 @@ router.post("/withdraw", requireAuth, async (req, res: Response) => {
     return;
   }
 
+  // amount_usdc stays the gross, requested amount - that's what the balance
+  // ledger deducts (computeBalance sums this column), matching "withdrawing
+  // 500 reduces your available balance by 500". network_fee_usdc records what
+  // Zerra keeps; only amount - fee is ever actually sent on-chain, below.
+  const netAmount = Math.round((amount - WITHDRAWAL_FEE_USDC) * 1e6) / 1e6;
+
   const { data: withdrawal, error: insertError } = await supabase
     .from("withdrawals")
-    .insert({ user_id: user.id, amount_usdc: amount, destination_address: userRow.wallet_address, network: "base", status: "pending" })
+    .insert({
+      user_id: user.id, amount_usdc: amount, network_fee_usdc: WITHDRAWAL_FEE_USDC,
+      destination_address: userRow.wallet_address, network: "base", status: "pending",
+    })
     .select().single();
   if (insertError || !withdrawal) {
     // 23505 = unique_violation on withdrawals_one_pending_per_user - the real,
@@ -202,17 +227,17 @@ router.post("/withdraw", requireAuth, async (req, res: Response) => {
 
   try {
     const treasuryBalance = await getTreasuryBalanceUsdc();
-    if (treasuryBalance < amount) {
+    if (treasuryBalance < netAmount) {
       throw new Error("Treasury balance is temporarily insufficient. Try again shortly, or contact support.");
     }
 
-    const { txHash } = await sendUsdc(userRow.wallet_address, amount);
+    const { txHash } = await sendUsdc(userRow.wallet_address, netAmount);
 
     await supabase.from("withdrawals")
       .update({ status: "completed", tx_hash: txHash, completed_at: new Date().toISOString() })
       .eq("id", withdrawal.id);
 
-    res.json({ status: "completed", tx_hash: txHash, amount_usdc: amount });
+    res.json({ status: "completed", tx_hash: txHash, amount_usdc: amount, net_amount_usdc: netAmount });
   } catch (err: any) {
     const message = err instanceof TreasuryNotConfiguredError ? err.message : (err.message ?? "Withdrawal failed");
     await supabase.from("withdrawals").update({ status: "failed", error: message }).eq("id", withdrawal.id);

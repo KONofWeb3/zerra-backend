@@ -14,8 +14,10 @@ import instagramRouter from "./routes/instagram";
 import uploadRouter from "./routes/upload";
 import creatorsRouter from "./routes/creators";
 import walletRouter from "./routes/wallet";
+import readinessRouter, { readinessAdminRouter } from "./routes/readiness";
 import { startVerificationWorker } from "./jobs/verificationWorker";
 import { startInfluenceScoreWorker } from "./jobs/influenceScoreWorker";
+import { startReadinessWorker } from "./jobs/readinessWorker";
 
 dotenv.config();
 
@@ -67,6 +69,8 @@ app.use("/auth/instagram", instagramRouter);
 app.use("/upload", uploadRouter);
 app.use("/creators", creatorsRouter);
 app.use("/wallet", walletRouter);
+app.use("/readiness", readinessRouter);
+app.use("/admin/readiness", readinessAdminRouter);
 
 async function startServer() {
   const { error } = await supabase.from("users").select("id").limit(1);
@@ -85,6 +89,8 @@ async function startServer() {
   startVerificationWorker();
 
   startInfluenceScoreWorker();
+
+  startReadinessWorker();
 }
 
 startServer();

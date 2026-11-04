@@ -14,6 +14,7 @@ import {
   getTwitterUser,
   generatePkcePair,
 } from "../lib/twitter";
+import { createTwitterState, consumeTwitterState } from "../lib/twitterPending";
 import { calculateAndStoreInfluenceScore } from "../lib/scoringData";
 import { calculateAndStoreScorecard } from "../lib/creatorScorecard";
 import { syncTikTokPosts } from "../lib/syncTikTok";
@@ -39,13 +40,9 @@ router.get("/tiktok", requireAuth, (req: Request, res: Response) => {
 // not registered yet, so this will error until those exist.
 router.get("/twitter", requireAuth, (req: Request, res: Response) => {
   const { codeVerifier, codeChallenge } = generatePkcePair();
-  const state = Buffer.from(
-    JSON.stringify({
-      token: req.query.token as string,
-      nonce: crypto.randomBytes(8).toString("hex"),
-      codeVerifier,
-    })
-  ).toString("base64");
+  // X rejects a `state` over 500 characters, and the old one carried the user's
+  // login token. Keep that server-side and send only a short random id.
+  const state = createTwitterState((req as AuthRequest).user.id, codeVerifier);
 
   const url = getTwitterAuthUrl(state, codeChallenge);
   res.redirect(url);
@@ -223,22 +220,14 @@ router.get("/tw/callback", async (req: Request, res: Response) => {
   }
 
   try {
-    const decoded = JSON.parse(Buffer.from(state as string, "base64").toString());
-    const token = decoded.token;
-    const codeVerifier = decoded.codeVerifier;
-
-    if (!token || !codeVerifier) {
+    const handshake = consumeTwitterState(String(state));
+    if (!handshake) {
       res.redirect(`${process.env.FRONTEND_URL}/settings?error=twitter_failed`);
       return;
     }
 
-    const { data, error: authError } = await supabase.auth.getUser(token);
-    if (authError || !data.user) {
-      res.redirect(`${process.env.FRONTEND_URL}/settings?error=twitter_failed`);
-      return;
-    }
-
-    const user = data.user;
+    const user = { id: handshake.userId };
+    const codeVerifier = handshake.codeVerifier;
 
     const tokens = await exchangeTwitterCode(code as string, codeVerifier);
     const twitterUser = await getTwitterUser(tokens.access_token);

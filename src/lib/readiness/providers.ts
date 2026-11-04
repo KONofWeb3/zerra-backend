@@ -2,13 +2,46 @@ import type { FollowerLite, PostLite, XDataProvider } from "./types";
 
 const BASE = "https://api.twitterapi.io";
 
+// TwitterAPI.io rate-limits by account: roughly one request every 5 seconds
+// until the account has paid, far more after. Every call goes through one
+// queue (so a user's followers and posts requests, and different users'
+// refreshes, never overlap). It starts fast and, on a 429, slows to the free
+// tier's pace and retries, so a paid account isn't throttled needlessly.
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const FREE_TIER_GAP_MS = 5200;
+let gapMs = 1000;
+let lastCallAt = 0;
+let queue: Promise<unknown> = Promise.resolve();
+
+function schedule<T>(fn: () => Promise<T>): Promise<T> {
+  const run = queue.then(async () => {
+    const wait = lastCallAt + gapMs - Date.now();
+    if (wait > 0) await sleep(wait);
+    try {
+      return await fn();
+    } finally {
+      lastCallAt = Date.now();
+    }
+  });
+  queue = run.catch(() => undefined);
+  return run;
+}
+
 async function get(path: string, params: Record<string, string>, key: string) {
   const url = `${BASE}${path}?${new URLSearchParams(params)}`;
-  const res = await fetch(url, { headers: { "X-API-Key": key } });
-  if (!res.ok) throw new Error(`TwitterAPI.io ${path} -> ${res.status}`);
-  const body: any = await res.json();
-  if (body.status && body.status !== "success") throw new Error(`TwitterAPI.io ${path}: ${body.msg ?? "error"}`);
-  return body;
+  for (let attempt = 0; ; attempt++) {
+    const res = await schedule(() => fetch(url, { headers: { "X-API-Key": key } }));
+    if (res.status === 429 && attempt < 4) {
+      gapMs = Math.max(gapMs, FREE_TIER_GAP_MS);
+      const retryAfter = Number(res.headers.get("retry-after"));
+      await sleep(retryAfter > 0 ? retryAfter * 1000 : FREE_TIER_GAP_MS);
+      continue;
+    }
+    if (!res.ok) throw new Error(`TwitterAPI.io ${path} -> ${res.status}`);
+    const body: any = await res.json();
+    if (body.status && body.status !== "success") throw new Error(`TwitterAPI.io ${path}: ${body.msg ?? "error"}`);
+    return body;
+  }
 }
 
 // Endpoint shapes from docs.twitterapi.io (followers by userName, 200/page,
@@ -43,7 +76,7 @@ export function twitterApiIoProvider(key: string): XDataProvider {
     async getRecentPosts(username, sinceMs) {
       const out: PostLite[] = [];
       let cursor = "";
-      for (let page = 0; page < 4; page++) {
+      for (let page = 0; page < 2; page++) {
         const body = await get("/twitter/user/last_tweets", { userName: username, cursor, includeReplies: "false" }, key);
         const tweets: any[] = body.data?.tweets ?? [];
         let reachedOld = false;

@@ -2,7 +2,7 @@ import { supabase } from "../supabase";
 import { getProvider } from "./providers";
 import { followerQuality, readinessScore, QUALITY_THRESHOLD } from "./score";
 
-const SAMPLE_SIZE = 1000;
+const SAMPLE_SIZE = 400; // two pages of 200: keeps a refresh to a handful of rate-limited calls
 const THIRTY_DAYS_MS = 30 * 86_400_000;
 
 export class ReadinessError extends Error {
@@ -33,10 +33,9 @@ export async function computeAndStoreReadiness(userId: string) {
 
   let sample, posts;
   try {
-    [sample, posts] = await Promise.all([
-      provider.getFollowerSample(account.username, SAMPLE_SIZE),
-      provider.getRecentPosts(account.username, Date.now() - THIRTY_DAYS_MS),
-    ]);
+    // One after the other: the data provider allows very few requests per second.
+    sample = await provider.getFollowerSample(account.username, SAMPLE_SIZE);
+    posts = await provider.getRecentPosts(account.username, Date.now() - THIRTY_DAYS_MS);
   } catch (err: any) {
     throw new ReadinessError("provider_failed", err.message);
   }

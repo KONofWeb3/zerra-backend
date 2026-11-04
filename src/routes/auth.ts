@@ -215,22 +215,29 @@ router.get("/tw/callback", async (req: Request, res: Response) => {
   const { code, error, state } = req.query;
 
   if (error || !code || !state) {
+    console.error("Twitter callback denied by X:", error, req.query.error_description);
     res.redirect(`${process.env.FRONTEND_URL}/settings?error=twitter_denied`);
     return;
   }
 
+  // Which step failed, so a bad connect is diagnosable from the logs and the UI.
+  let stage = "state";
   try {
     const handshake = consumeTwitterState(String(state));
     if (!handshake) {
-      res.redirect(`${process.env.FRONTEND_URL}/settings?error=twitter_failed`);
+      console.error("Twitter callback: unknown or expired state");
+      res.redirect(`${process.env.FRONTEND_URL}/settings?error=twitter_failed&reason=state`);
       return;
     }
 
     const user = { id: handshake.userId };
     const codeVerifier = handshake.codeVerifier;
 
+    stage = "token";
     const tokens = await exchangeTwitterCode(code as string, codeVerifier);
+    stage = "profile";
     const twitterUser = await getTwitterUser(tokens.access_token);
+    stage = "save";
 
     const { error: dbError } = await supabase
       .from("social_accounts")
@@ -265,8 +272,8 @@ router.get("/tw/callback", async (req: Request, res: Response) => {
 
     res.redirect(`${process.env.FRONTEND_URL}/settings?connected=twitter`);
   } catch (err: any) {
-    console.error("Twitter callback error:", err.message);
-    res.redirect(`${process.env.FRONTEND_URL}/settings?error=twitter_failed`);
+    console.error(`Twitter callback error [${stage}]:`, err.message ?? err);
+    res.redirect(`${process.env.FRONTEND_URL}/settings?error=twitter_failed&reason=${stage}`);
   }
 });
 

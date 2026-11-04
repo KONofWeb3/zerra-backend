@@ -248,6 +248,82 @@ router.get("/top-creators", async (_req, res: Response) => {
   res.json({ creators });
 });
 
+// GET /analytics/trending — public. Platform-wide trending posts, the top three
+// by engagement, and which creator niches the views are coming from. Everything
+// is computed from tiktok_posts + users.niche; nothing is invented. Sorting and
+// the platform filter happen on the frontend over this one list.
+router.get("/trending", async (_req, res: Response) => {
+  const { data, error } = await supabase
+    .from("tiktok_posts")
+    .select(`
+      post_id,
+      user_id,
+      title,
+      cover_image_url,
+      view_count,
+      engagement_rate,
+      created_time,
+      fetched_at,
+      users ( name, avatar )
+    `)
+    .order("engagement_rate", { ascending: false })
+    .limit(300);
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  const rows = (data ?? []) as any[];
+  const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
+
+  const [{ data: accountRows }, { data: userRows }] = userIds.length
+    ? await Promise.all([
+        supabase.from("social_accounts").select("user_id, username").eq("platform", "tiktok").in("user_id", userIds),
+        supabase.from("users").select("id, niche").in("id", userIds),
+      ])
+    : [{ data: [] }, { data: [] }];
+
+  const handleByUser = new Map((accountRows ?? []).map((a: any) => [a.user_id, a.username as string | null]));
+  const nicheByUser = new Map((userRows ?? []).map((u: any) => [u.id, u.niche as string | null]));
+
+  const posts = rows.map((r) => ({
+    id: r.post_id as string,
+    title: (r.title as string | null) ?? null,
+    cover_image_url: (r.cover_image_url as string | null) ?? null,
+    creator_name: r.users?.name ?? null,
+    creator_avatar: r.users?.avatar ?? null,
+    handle: handleByUser.get(r.user_id) ?? null,
+    niche: nicheByUser.get(r.user_id) ?? null,
+    platform: "tiktok",
+    views: Number(r.view_count || 0),
+    engagement_rate: Number(r.engagement_rate || 0),
+    posted_at: (r.created_time ?? r.fetched_at) as string,
+  }));
+
+  // Share of all views per niche, top five.
+  const viewsByNiche = new Map<string, number>();
+  let nicheTotal = 0;
+  for (const p of posts) {
+    if (!p.niche) continue;
+    viewsByNiche.set(p.niche, (viewsByNiche.get(p.niche) ?? 0) + p.views);
+    nicheTotal += p.views;
+  }
+  const niches = Array.from(viewsByNiche.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([niche, views]) => ({ niche, share: nicheTotal ? Math.round((views / nicheTotal) * 100) : 0 }));
+
+  const updatedAt = rows.reduce<string | null>((latest, r) => (!latest || r.fetched_at > latest ? r.fetched_at : latest), null);
+
+  res.json({
+    updated_at: updatedAt,
+    top: posts.slice(0, 3),
+    posts: posts.slice(0, 100),
+    niches,
+  });
+});
+
 // GET /analytics/campaigns/:campaignId/my-posts — creator's verified posts for ONE campaign
 router.get("/campaigns/:campaignId/my-posts", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;

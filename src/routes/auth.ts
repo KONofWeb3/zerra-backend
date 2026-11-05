@@ -216,7 +216,7 @@ router.get("/tw/callback", async (req: Request, res: Response) => {
 
   if (error || !code || !state) {
     console.error("Twitter callback denied by X:", error, req.query.error_description);
-    res.redirect(`${process.env.FRONTEND_URL}/settings?error=twitter_denied`);
+    res.redirect(`${process.env.FRONTEND_URL}/dashboard?error=twitter_denied`);
     return;
   }
 
@@ -226,7 +226,7 @@ router.get("/tw/callback", async (req: Request, res: Response) => {
     const handshake = consumeTwitterState(String(state));
     if (!handshake) {
       console.error("Twitter callback: unknown or expired state");
-      res.redirect(`${process.env.FRONTEND_URL}/settings?error=twitter_failed&reason=state`);
+      res.redirect(`${process.env.FRONTEND_URL}/dashboard?error=twitter_failed&reason=state`);
       return;
     }
 
@@ -257,7 +257,7 @@ router.get("/tw/callback", async (req: Request, res: Response) => {
 
     if (dbError) {
       if (isDuplicateSocialAccountError(dbError)) {
-        res.redirect(`${process.env.FRONTEND_URL}/settings?error=twitter_already_linked`);
+        res.redirect(`${process.env.FRONTEND_URL}/dashboard?error=twitter_already_linked`);
         return;
       }
       throw dbError;
@@ -270,10 +270,10 @@ router.get("/tw/callback", async (req: Request, res: Response) => {
       console.error("Failed to calculate scores after Twitter connect:", err.message);
     }
 
-    res.redirect(`${process.env.FRONTEND_URL}/settings?connected=twitter`);
+    res.redirect(`${process.env.FRONTEND_URL}/dashboard?connected=twitter`);
   } catch (err: any) {
     console.error(`Twitter callback error [${stage}]:`, err.message ?? err);
-    res.redirect(`${process.env.FRONTEND_URL}/settings?error=twitter_failed&reason=${stage}`);
+    res.redirect(`${process.env.FRONTEND_URL}/dashboard?error=twitter_failed&reason=${stage}`);
   }
 });
 

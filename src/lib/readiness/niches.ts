@@ -71,5 +71,5 @@ export function nicheVoices(posts: PostLite[]): NicheVoice[] {
     );
     out.push({ niche, score, label: voiceLabel(score), posts: list.length });
   }
-  return out.sort((a, b) => b.score - a.score || b.posts - a.posts).slice(0, 3);
+  return out.sort((a, b) => b.score - a.score || b.posts - a.posts).slice(0, 5);
 }

@@ -9,7 +9,9 @@ import {
   computeAndStoreReadiness,
   getSnapshots,
   getTwitterAccount,
+  voicesWithRank,
 } from "../lib/readiness/service";
+import { ALGO_VERSION } from "../lib/readiness/score";
 
 const router = Router();
 const REFRESH_COOLDOWN_MS = 6 * 60 * 60 * 1000;
@@ -19,11 +21,13 @@ router.get("/me", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;
   try {
     const [account, snapshots] = await Promise.all([getTwitterAccount(user.id), getSnapshots(user.id)]);
+    const latest: any = snapshots[0] ?? null;
     res.json({
       available: getProvider() !== null,
       connected: !!account?.username,
       username: account?.username ?? null,
-      latest: snapshots[0] ?? null,
+      latest,
+      voices: await voicesWithRank(user.id, latest?.niches ?? null),
       trend: [...snapshots].reverse().map((s) => ({ date: s.snapshot_date, score: Number(s.score) })),
     });
   } catch (err: any) {
@@ -36,7 +40,9 @@ router.post("/me/refresh", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;
   try {
     const [latest] = await getSnapshots(user.id, 1);
-    if (latest && Date.now() - new Date(latest.created_at).getTime() < REFRESH_COOLDOWN_MS) {
+    // A snapshot from an older scoring model is recomputed straight away, whatever its age.
+    const current = latest && (latest.algo_version ?? 1) >= ALGO_VERSION;
+    if (current && Date.now() - new Date(latest.created_at).getTime() < REFRESH_COOLDOWN_MS) {
       res.status(429).json({ error: "Refreshed recently, try again later" });
       return;
     }

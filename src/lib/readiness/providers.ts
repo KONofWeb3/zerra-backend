@@ -64,6 +64,8 @@ export function twitterApiIoProvider(key: string): XDataProvider {
             followers: Number(f.followers_count ?? 0),
             following: Number(f.following_count ?? f.friends_count ?? 0),
             statuses: Number(f.statuses_count ?? 0),
+            likes: Number(f.favourites_count ?? 0),
+            hasBio: Boolean(String(f.description ?? "").trim()),
             verified: Boolean(f.isBlueVerified || f.verified),
           });
         }
@@ -75,20 +77,35 @@ export function twitterApiIoProvider(key: string): XDataProvider {
 
     async getRecentPosts(username, sinceMs) {
       const out: PostLite[] = [];
+      let followers: number | null = null;
       let cursor = "";
-      for (let page = 0; page < 2; page++) {
+      for (let page = 0; page < 3; page++) {
         const body = await get("/twitter/user/last_tweets", { userName: username, cursor, includeReplies: "false" }, key);
         const tweets: any[] = body.data?.tweets ?? [];
         let reachedOld = false;
         for (const t of tweets) {
+          if (followers == null) {
+            const n = Number(t.author?.followers ?? t.author?.followers_count);
+            if (Number.isFinite(n) && n > 0) followers = n;
+          }
           const at = new Date(t.createdAt).getTime();
           if (at < sinceMs) { reachedOld = true; continue; }
-          out.push({ id: String(t.id), createdAt: t.createdAt, isReply: Boolean(t.isReply) });
+          out.push({
+            id: String(t.id),
+            createdAt: t.createdAt,
+            isReply: Boolean(t.isReply),
+            text: String(t.text ?? ""),
+            likes: Number(t.likeCount ?? 0),
+            replies: Number(t.replyCount ?? 0),
+            retweets: Number(t.retweetCount ?? 0),
+            quotes: Number(t.quoteCount ?? 0),
+            views: Number(t.viewCount ?? 0),
+          });
         }
         if (reachedOld || !body.has_next_page || !body.next_cursor) break;
         cursor = body.next_cursor;
       }
-      return out;
+      return { posts: out.filter((p) => !p.isReply), followers };
     },
   };
 }
@@ -109,13 +126,29 @@ function fakeProvider(): XDataProvider {
           followers: r * 15,
           following: 40 + (r % 30),
           statuses: r * 12,
+          likes: r * 20,
+          hasBio: r % 3 !== 0,
           verified: r > 92,
         };
       });
     },
     async getRecentPosts(username) {
       const n = 4 + (hash(username) % 14);
-      return Array.from({ length: n }, (_, i) => ({ id: String(i), createdAt: new Date().toISOString(), isReply: false }));
+      const topics = ["DeFi yield on Aave today", "AI agents are the next wave", "Bitcoin halving thoughts", "NFT floor price update", "Building in public: shipped a feature"];
+      return {
+        followers: null,
+        posts: Array.from({ length: n }, (_, i) => ({
+          id: String(i),
+          createdAt: new Date(Date.now() - i * 2.5 * 86_400_000).toISOString(),
+          isReply: false,
+          text: topics[i % topics.length],
+          likes: 20 + (hash(`${username}${i}`) % 80),
+          replies: 3,
+          retweets: 5,
+          quotes: 1,
+          views: 2000 + (hash(`${username}v${i}`) % 3000),
+        })),
+      };
     },
   };
 }

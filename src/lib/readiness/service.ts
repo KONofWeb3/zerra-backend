@@ -122,6 +122,26 @@ export async function computeAndStoreReadiness(userId: string) {
 
   // ── The creator's own posting ──
   const posts = recent.posts;
+
+  // Keep their posts so the Trending page can rank them (best effort: scoring doesn't depend on it).
+  if (posts.length) {
+    const { error: postsError } = await supabase.from("x_posts").upsert(
+      posts.map((p) => ({
+        post_id: p.id,
+        user_id: userId,
+        text: p.text.slice(0, 1000),
+        posted_at: p.createdAt,
+        likes: p.likes,
+        replies: p.replies,
+        retweets: p.retweets,
+        quotes: p.quotes,
+        views: p.views,
+        fetched_at: new Date().toISOString(),
+      })),
+      { onConflict: "post_id" },
+    );
+    if (postsError) console.error("Storing x_posts failed:", postsError.message);
+  }
   const recent30 = posts.filter((p) => now - new Date(p.createdAt).getTime() <= 30 * DAY_MS);
   const prior30 = posts.filter((p) => {
     const age = now - new Date(p.createdAt).getTime();

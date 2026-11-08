@@ -3,6 +3,7 @@ import { requireAuth } from "../middleware/requireAuth";
 import { AuthRequest } from "../types";
 import { supabase } from "../lib/supabase";
 import { syncTikTokPosts } from "../lib/syncTikTok";
+import { classifyPost } from "../lib/readiness/niches";
 import { getClassifiedPosts, computePerformanceInsight, computeInfluenceFit, computeBestTimeWindow } from "../lib/analyticsInsights";
 
 const router = Router();
@@ -248,25 +249,17 @@ router.get("/top-creators", async (_req, res: Response) => {
   res.json({ creators });
 });
 
-// GET /analytics/trending — public. Platform-wide trending posts, the top three
-// by engagement, and which creator niches the views are coming from. Everything
-// is computed from tiktok_posts + users.niche; nothing is invented. Sorting and
-// the platform filter happen on the frontend over this one list.
+// GET /analytics/trending — public. Trending X posts from connected Zerra creators:
+// the top three by engagement, the full ranked list, and which topics the views
+// come from. Everything is computed from stored x_posts; nothing is invented.
+// Sorting and the platform filter happen on the frontend over this one list.
 router.get("/trending", async (_req, res: Response) => {
+  const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
   const { data, error } = await supabase
-    .from("tiktok_posts")
-    .select(`
-      post_id,
-      user_id,
-      title,
-      cover_image_url,
-      view_count,
-      engagement_rate,
-      created_time,
-      fetched_at,
-      users ( name, avatar )
-    `)
-    .order("engagement_rate", { ascending: false })
+    .from("x_posts")
+    .select("post_id, user_id, text, posted_at, likes, replies, retweets, quotes, views, fetched_at, users ( name, avatar )")
+    .gte("posted_at", since)
+    .order("views", { ascending: false })
     .limit(300);
 
   if (error) {
@@ -277,31 +270,35 @@ router.get("/trending", async (_req, res: Response) => {
   const rows = (data ?? []) as any[];
   const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
 
-  const [{ data: accountRows }, { data: userRows }] = userIds.length
-    ? await Promise.all([
-        supabase.from("social_accounts").select("user_id, username").eq("platform", "tiktok").in("user_id", userIds),
-        supabase.from("users").select("id, niche").in("id", userIds),
-      ])
-    : [{ data: [] }, { data: [] }];
-
+  const { data: accountRows } = userIds.length
+    ? await supabase.from("social_accounts").select("user_id, username").eq("platform", "twitter").in("user_id", userIds)
+    : { data: [] as any[] };
   const handleByUser = new Map((accountRows ?? []).map((a: any) => [a.user_id, a.username as string | null]));
-  const nicheByUser = new Map((userRows ?? []).map((u: any) => [u.id, u.niche as string | null]));
 
-  const posts = rows.map((r) => ({
-    id: r.post_id as string,
-    title: (r.title as string | null) ?? null,
-    cover_image_url: (r.cover_image_url as string | null) ?? null,
-    creator_name: r.users?.name ?? null,
-    creator_avatar: r.users?.avatar ?? null,
-    handle: handleByUser.get(r.user_id) ?? null,
-    niche: nicheByUser.get(r.user_id) ?? null,
-    platform: "tiktok",
-    views: Number(r.view_count || 0),
-    engagement_rate: Number(r.engagement_rate || 0),
-    posted_at: (r.created_time ?? r.fetched_at) as string,
-  }));
+  const posts = rows.map((r) => {
+    const views = Number(r.views || 0);
+    const engagements = Number(r.likes || 0) + Number(r.replies || 0) + Number(r.retweets || 0) + Number(r.quotes || 0);
+    const handle = handleByUser.get(r.user_id) ?? null;
+    return {
+      id: r.post_id as string,
+      title: String(r.text ?? "").replace(/s+/g, " ").trim().slice(0, 140) || null,
+      cover_image_url: null as string | null,
+      creator_name: r.users?.name ?? null,
+      creator_avatar: r.users?.avatar ?? null,
+      handle,
+      niche: classifyPost(String(r.text ?? ""))[0] ?? null,
+      platform: "x",
+      views,
+      engagement_rate: views > 0 ? Math.round((engagements / views) * 10000) / 100 : 0,
+      posted_at: r.posted_at as string,
+      url: handle ? `https://x.com/${handle}/status/${r.post_id}` : null,
+    };
+  });
 
-  // Share of all views per niche, top five.
+  // Best first: engagement rate, with views as the tie-break.
+  posts.sort((a, b) => b.engagement_rate - a.engagement_rate || b.views - a.views);
+
+  // Share of all views per topic, top five.
   const viewsByNiche = new Map<string, number>();
   let nicheTotal = 0;
   for (const p of posts) {

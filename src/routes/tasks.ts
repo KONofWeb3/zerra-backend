@@ -85,7 +85,7 @@ router.get("/", async (req, res: Response) => {
       week,
     });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    console.error("tasks error:", err.message); res.status(500).json({ error: err.message });
   }
 });
 
@@ -100,7 +100,7 @@ router.get("/activity", async (req, res: Response) => {
   try {
     res.json({ days: [...(await activeDays(user.id, from, to))].sort() });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    console.error("tasks error:", err.message); res.status(500).json({ error: err.message });
   }
 });
 
@@ -122,7 +122,7 @@ router.post("/", async (req, res: Response) => {
     .insert({ user_id: user.id, title })
     .select("id, title")
     .single();
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  if (error) { console.error("tasks error:", error.message); res.status(500).json({ error: error.message }); return; }
   res.json({ task: { ...data, done: false } });
 });
 
@@ -152,11 +152,11 @@ router.post("/:id/toggle", async (req, res: Response) => {
 
   if (existing) {
     const { error } = await supabase.from("creator_task_completions").delete().eq("task_id", task.id).eq("day", day);
-    if (error) { res.status(500).json({ error: error.message }); return; }
+    if (error) { console.error("tasks error:", error.message); res.status(500).json({ error: error.message }); return; }
     res.json({ done: false });
   } else {
     const { error } = await supabase.from("creator_task_completions").insert({ task_id: task.id, user_id: user.id, day });
-    if (error) { res.status(500).json({ error: error.message }); return; }
+    if (error) { console.error("tasks error:", error.message); res.status(500).json({ error: error.message }); return; }
     res.json({ done: true });
   }
 });
@@ -169,7 +169,7 @@ router.delete("/:id", async (req, res: Response) => {
     .update({ archived_at: new Date().toISOString() })
     .eq("id", req.params.id)
     .eq("user_id", user.id);
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  if (error) { console.error("tasks error:", error.message); res.status(500).json({ error: error.message }); return; }
   res.json({ ok: true });
 });
 

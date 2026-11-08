@@ -295,8 +295,8 @@ router.get("/trending", async (_req, res: Response) => {
     };
   });
 
-  // Best first: engagement rate, with views as the tie-break.
-  posts.sort((a, b) => b.engagement_rate - a.engagement_rate || b.views - a.views);
+  // Highest impressions first, with engagement rate as the tie-break.
+  posts.sort((a, b) => b.views - a.views || b.engagement_rate - a.engagement_rate);
 
   // Share of all views per topic, top five.
   const viewsByNiche = new Map<string, number>();

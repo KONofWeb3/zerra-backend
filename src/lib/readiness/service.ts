@@ -124,22 +124,27 @@ export async function computeAndStoreReadiness(userId: string) {
   const posts = recent.posts;
 
   // Keep their posts so the Trending page can rank them (best effort: scoring doesn't depend on it).
-  if (posts.length) {
-    const { error: postsError } = await supabase.from("x_posts").upsert(
-      posts.map((p) => ({
-        post_id: p.id,
-        user_id: userId,
-        text: p.text.slice(0, 1000),
-        posted_at: p.createdAt,
-        likes: p.likes,
-        replies: p.replies,
-        retweets: p.retweets,
-        quotes: p.quotes,
-        views: p.views,
-        fetched_at: new Date().toISOString(),
-      })),
-      { onConflict: "post_id" },
-    );
+  // The provider dates posts like "Tue Dec 10 07:00:30 +0000 2024", which Postgres can't read, so
+  // convert to ISO first. One row per tweet id (a repeat in the same batch would fail the upsert).
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const p of posts) {
+    const at = new Date(p.createdAt);
+    if (Number.isNaN(at.getTime())) continue;
+    byId.set(p.id, {
+      post_id: p.id,
+      user_id: userId,
+      text: p.text.slice(0, 1000),
+      posted_at: at.toISOString(),
+      likes: p.likes,
+      replies: p.replies,
+      retweets: p.retweets,
+      quotes: p.quotes,
+      views: p.views,
+      fetched_at: new Date().toISOString(),
+    });
+  }
+  if (byId.size) {
+    const { error: postsError } = await supabase.from("x_posts").upsert([...byId.values()], { onConflict: "post_id" });
     if (postsError) console.error("Storing x_posts failed:", postsError.message);
   }
   const recent30 = posts.filter((p) => now - new Date(p.createdAt).getTime() <= 30 * DAY_MS);

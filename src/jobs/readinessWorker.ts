@@ -33,11 +33,15 @@ async function tick() {
     const lastByUser = new Map<string, string>();
     for (const s of snaps ?? []) if (!lastByUser.has(s.user_id)) lastByUser.set(s.user_id, s.created_at);
 
+    // Creators whose posts were never saved for Trending (e.g. scored before that existed) are due too.
+    const { data: stored } = await supabase.from("x_posts").select("user_id").in("user_id", userIds).limit(10000);
+    const haveStoredPosts = new Set((stored ?? []).map((r: { user_id: string }) => r.user_id));
+
     const now = Date.now();
     const due = userIds
       .filter((id) => {
         const last = lastByUser.get(id);
-        return !last || now - new Date(last).getTime() > STALE_AFTER_MS;
+        return !last || !haveStoredPosts.has(id) || now - new Date(last).getTime() > STALE_AFTER_MS;
       })
       .slice(0, BATCH_SIZE);
 

@@ -68,7 +68,12 @@ router.post("/me/refresh", requireAuth, async (req, res: Response) => {
   try {
     const [latest] = await getSnapshots(user.id, 1);
     // A snapshot from an older scoring model is recomputed straight away, whatever its age.
-    const current = latest && (latest.algo_version ?? 1) >= ALGO_VERSION;
+    let current = latest && (latest.algo_version ?? 1) >= ALGO_VERSION;
+    if (current) {
+      // Posts not yet saved for Trending also count as "needs a run".
+      const { count } = await supabase.from("x_posts").select("post_id", { count: "exact", head: true }).eq("user_id", user.id);
+      if (!count) current = false;
+    }
     if (current && Date.now() - new Date(latest.created_at).getTime() < REFRESH_COOLDOWN_MS) {
       res.status(429).json({ error: "Refreshed recently, try again later" });
       return;

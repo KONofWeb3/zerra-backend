@@ -4,6 +4,7 @@ import {
   ALGO_VERSION, STRONG_THRESHOLD, followerQuality, median, scoreReadiness,
 } from "./score";
 import { nicheVoices } from "./niches";
+import { syncXDisplayName } from "../xProfile";
 import type { PostLite } from "./types";
 
 const SAMPLE_SIZE = 400; // two pages of 200: keeps a refresh to a handful of rate-limited calls
@@ -96,6 +97,9 @@ export async function computeAndStoreReadiness(userId: string) {
   } catch (err: any) {
     throw new ReadinessError("provider_failed", err.message);
   }
+
+  // Also fixes the display name for people who connected X before names were synced.
+  await syncXDisplayName(userId, recent.displayName);
 
   const total = Math.max(recent.followers ?? account.follower_count ?? 0, sample.length);
   if (recent.followers && recent.followers !== account.follower_count) {

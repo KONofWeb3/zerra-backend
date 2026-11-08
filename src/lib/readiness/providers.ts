@@ -78,6 +78,7 @@ export function twitterApiIoProvider(key: string): XDataProvider {
     async getRecentPosts(username, sinceMs) {
       const out: PostLite[] = [];
       let followers: number | null = null;
+      let displayName: string | null = null;
       let cursor = "";
       for (let page = 0; page < 3; page++) {
         const body = await get("/twitter/user/last_tweets", { userName: username, cursor, includeReplies: "false" }, key);
@@ -87,6 +88,9 @@ export function twitterApiIoProvider(key: string): XDataProvider {
           if (followers == null) {
             const n = Number(t.author?.followers ?? t.author?.followers_count);
             if (Number.isFinite(n) && n > 0) followers = n;
+          }
+          if (displayName == null && typeof t.author?.name === "string" && t.author.name.trim()) {
+            displayName = t.author.name.trim();
           }
           const at = new Date(t.createdAt).getTime();
           if (at < sinceMs) { reachedOld = true; continue; }
@@ -105,7 +109,7 @@ export function twitterApiIoProvider(key: string): XDataProvider {
         if (reachedOld || !body.has_next_page || !body.next_cursor) break;
         cursor = body.next_cursor;
       }
-      return { posts: out.filter((p) => !p.isReply), followers };
+      return { posts: out.filter((p) => !p.isReply), followers, displayName };
     },
   };
 }
@@ -137,6 +141,7 @@ function fakeProvider(): XDataProvider {
       const topics = ["DeFi yield on Aave today", "AI agents are the next wave", "Bitcoin halving thoughts", "NFT floor price update", "Building in public: shipped a feature"];
       return {
         followers: null,
+        displayName: null,
         posts: Array.from({ length: n }, (_, i) => ({
           id: String(i),
           createdAt: new Date(Date.now() - i * 2.5 * 86_400_000).toISOString(),

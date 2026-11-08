@@ -15,6 +15,7 @@ import {
   generatePkcePair,
 } from "../lib/twitter";
 import { createTwitterState, consumeTwitterState } from "../lib/twitterPending";
+import { syncXDisplayName } from "../lib/xProfile";
 import { calculateAndStoreInfluenceScore } from "../lib/scoringData";
 import { calculateAndStoreScorecard } from "../lib/creatorScorecard";
 import { syncTikTokPosts } from "../lib/syncTikTok";
@@ -262,6 +263,9 @@ router.get("/tw/callback", async (req: Request, res: Response) => {
       }
       throw dbError;
     }
+
+    // Their display name becomes their X display name (unless they set one themselves).
+    await syncXDisplayName(user.id, twitterUser.name);
 
     try {
       await calculateAndStoreInfluenceScore(user.id);

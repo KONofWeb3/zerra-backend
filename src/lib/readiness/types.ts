@@ -31,6 +31,8 @@ export interface RecentPosts {
   posts: PostLite[];
   /** Live follower count of the account, when the source reports it. */
   followers: number | null;
+  /** The account's X display name, when the source reports it. */
+  displayName: string | null;
 }
 
 export interface XDataProvider {

@@ -146,6 +146,15 @@ export async function computeAndStoreReadiness(userId: string) {
   if (byId.size) {
     const { error: postsError } = await supabase.from("x_posts").upsert([...byId.values()], { onConflict: "post_id" });
     if (postsError) console.error("Storing x_posts failed:", postsError.message);
+    else {
+      // Drop anything saved earlier that is no longer in the fresh set (replies and retweets saved before this
+      // filter existed, or tweets since deleted), so Trending only ever ranks original tweets and quotes.
+      const keep = [...byId.keys()].map((id) => id.replace(/[^0-9]/g, "")).filter(Boolean);
+      if (keep.length) {
+        const { error: cleanError } = await supabase.from("x_posts").delete().eq("user_id", userId).not("post_id", "in", `(${keep.join(",")})`);
+        if (cleanError) console.error("Cleaning x_posts failed:", cleanError.message);
+      }
+    }
   }
   const recent30 = posts.filter((p) => now - new Date(p.createdAt).getTime() <= 30 * DAY_MS);
   const prior30 = posts.filter((p) => {

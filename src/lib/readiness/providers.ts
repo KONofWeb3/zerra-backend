@@ -109,6 +109,8 @@ export function twitterApiIoProvider(key: string): XDataProvider {
             const pic = t.author?.profilePicture ?? t.author?.profile_image_url_https;
             if (typeof pic === "string" && pic.startsWith("http")) avatarUrl = pic;
           }
+          // Only original tweets and quote tweets count: no replies (comments) and no plain retweets.
+          if (t.isReply || t.inReplyToId || t.retweeted_tweet || /^RT @/.test(String(t.text ?? ""))) continue;
           const at = new Date(t.createdAt).getTime();
           if (at < sinceMs) { reachedOld = true; continue; }
           out.push({

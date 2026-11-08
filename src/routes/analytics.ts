@@ -259,6 +259,8 @@ router.get("/trending", async (_req, res: Response) => {
     .from("x_posts")
     .select("post_id, user_id, text, posted_at, likes, replies, retweets, quotes, views, fetched_at, users ( name, avatar )")
     .gte("posted_at", since)
+    // Replies (comments) start with an @mention; keep them off Trending even if saved before the fetch filtered them.
+    .not("text", "like", "@%")
     .order("views", { ascending: false })
     .limit(300);
 

@@ -17,11 +17,10 @@ export const WEIGHTS = {
 export type ComponentKey = keyof typeof WEIGHTS;
 
 export const TIERS = [
-  { name: "Emerging", min: 0 },
-  { name: "Rising", min: 30 },
-  { name: "Established", min: 50 },
-  { name: "Influential", min: 70 },
-  { name: "Elite", min: 85 },
+  { name: "Emerging CT", min: 0 },
+  { name: "Discovered", min: 30 },
+  { name: "Smart Account", min: 55 },
+  { name: "Legend", min: 80 },
 ];
 
 /** Piecewise-linear lookup. `points` are [x, y] sorted by x; x is clamped to the ends. */

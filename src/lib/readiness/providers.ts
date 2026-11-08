@@ -79,6 +79,7 @@ export function twitterApiIoProvider(key: string): XDataProvider {
       const out: PostLite[] = [];
       let followers: number | null = null;
       let displayName: string | null = null;
+      let avatarUrl: string | null = null;
       let cursor = "";
       for (let page = 0; page < 3; page++) {
         const body = await get("/twitter/user/last_tweets", { userName: username, cursor, includeReplies: "false" }, key);
@@ -91,6 +92,10 @@ export function twitterApiIoProvider(key: string): XDataProvider {
           }
           if (displayName == null && typeof t.author?.name === "string" && t.author.name.trim()) {
             displayName = t.author.name.trim();
+          }
+          if (avatarUrl == null) {
+            const pic = t.author?.profilePicture ?? t.author?.profile_image_url_https;
+            if (typeof pic === "string" && pic.startsWith("http")) avatarUrl = pic;
           }
           const at = new Date(t.createdAt).getTime();
           if (at < sinceMs) { reachedOld = true; continue; }
@@ -109,7 +114,7 @@ export function twitterApiIoProvider(key: string): XDataProvider {
         if (reachedOld || !body.has_next_page || !body.next_cursor) break;
         cursor = body.next_cursor;
       }
-      return { posts: out.filter((p) => !p.isReply), followers, displayName };
+      return { posts: out.filter((p) => !p.isReply), followers, displayName, avatarUrl };
     },
   };
 }
@@ -142,6 +147,7 @@ function fakeProvider(): XDataProvider {
       return {
         followers: null,
         displayName: null,
+        avatarUrl: null,
         posts: Array.from({ length: n }, (_, i) => ({
           id: String(i),
           createdAt: new Date(Date.now() - i * 2.5 * 86_400_000).toISOString(),

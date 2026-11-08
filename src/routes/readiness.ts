@@ -12,6 +12,7 @@ import {
   voicesWithRank,
 } from "../lib/readiness/service";
 import { ALGO_VERSION } from "../lib/readiness/score";
+import { syncXProfile } from "../lib/xProfile";
 
 const router = Router();
 const REFRESH_COOLDOWN_MS = 6 * 60 * 60 * 1000;
@@ -32,6 +33,32 @@ router.get("/me", requireAuth, async (req, res: Response) => {
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /readiness/me/sync-profile: pull the connected X account's name and picture now.
+// One cheap provider call, throttled per user, so the dashboard can call it freely.
+const lastProfileSync = new Map<string, number>();
+const PROFILE_SYNC_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+
+router.post("/me/sync-profile", requireAuth, async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+  const provider = getProvider();
+  if (!provider) { res.json({ ok: false, reason: "unavailable" }); return; }
+
+  const last = lastProfileSync.get(user.id) ?? 0;
+  if (Date.now() - last < PROFILE_SYNC_COOLDOWN_MS) { res.json({ ok: true, skipped: true }); return; }
+
+  try {
+    const account = await getTwitterAccount(user.id);
+    if (!account?.username) { res.json({ ok: false, reason: "not_connected" }); return; }
+    const profile = await provider.getUserProfile(account.username);
+    lastProfileSync.set(user.id, Date.now());
+    await syncXProfile(user.id, { name: profile.name, avatar: profile.avatarUrl });
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error("sync-profile failed:", err.message);
+    res.status(502).json({ error: "Couldn't reach the data provider" });
   }
 });
 

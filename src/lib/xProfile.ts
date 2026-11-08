@@ -6,10 +6,11 @@ function bigAvatar(url: string): string {
 }
 
 /**
- * Make a user's name and profile picture their X display name and X picture,
- * but only where what's on file is still a default: empty, or what they signed
- * up with (their Google name/photo, or the part of their email before the @).
- * Anything they set themselves in Settings is left alone.
+ * Make a user's name and profile picture their X display name and X picture.
+ * The name is only replaced while it is still a default (empty, their Google
+ * name, or the part of their email before the @). The picture is replaced
+ * unless they uploaded their own (those live on our R2 domain). Anything they
+ * set themselves is left alone.
  */
 export async function syncXProfile(
   userId: string,
@@ -35,8 +36,9 @@ export async function syncXProfile(
 
   if (nextAvatar) {
     const current = (row?.avatar ?? "").trim();
-    const signupAvatars = [meta.avatar_url, meta.picture].filter((u): u is string => !!u);
-    if (current !== nextAvatar && (!current || signupAvatars.includes(current))) update.avatar = nextAvatar;
+    const r2 = (process.env.R2_PUBLIC_DOMAIN ?? "").replace(/^https?:\/\//, "");
+    const uploadedByUser = !!current && !!r2 && current.includes(r2);
+    if (current !== nextAvatar && !uploadedByUser) update.avatar = nextAvatar;
   }
 
   if (Object.keys(update).length === 0) return;

@@ -38,6 +38,8 @@ export interface RecentPosts {
 
 export interface XDataProvider {
   name: string;
+  /** Name, picture and follower count straight from the account's profile (one cheap call). */
+  getUserProfile(username: string): Promise<{ name: string | null; avatarUrl: string | null; followers: number | null }>;
   /** Up to `max` followers, newest first where the source orders them. */
   getFollowerSample(username: string, max: number): Promise<FollowerLite[]>;
   /** Original posts newer than `sinceMs`, newest first. */

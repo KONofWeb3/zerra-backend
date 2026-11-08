@@ -51,6 +51,18 @@ export function twitterApiIoProvider(key: string): XDataProvider {
   return {
     name: "twitterapi.io",
 
+    async getUserProfile(username) {
+      const body = await get("/twitter/user/info", { userName: username }, key);
+      const d = body.data ?? {};
+      const pic = d.profilePicture ?? d.profile_image_url_https;
+      const followers = Number(d.followers ?? d.followers_count);
+      return {
+        name: typeof d.name === "string" && d.name.trim() ? d.name.trim() : null,
+        avatarUrl: typeof pic === "string" && pic.startsWith("http") ? pic : null,
+        followers: Number.isFinite(followers) && followers > 0 ? followers : null,
+      };
+    },
+
     async getFollowerSample(username, max) {
       const out: FollowerLite[] = [];
       let cursor = "";
@@ -124,6 +136,9 @@ function fakeProvider(): XDataProvider {
   const hash = (s: string) => [...s].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7);
   return {
     name: "fake",
+    async getUserProfile() {
+      return { name: null, avatarUrl: null, followers: null };
+    },
     async getFollowerSample(username, max) {
       const seed = hash(username);
       return Array.from({ length: Math.min(max, 400) }, (_, i) => {

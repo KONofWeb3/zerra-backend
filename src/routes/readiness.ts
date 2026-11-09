@@ -146,6 +146,7 @@ admin.get("/seeds", async (_req, res: Response) => {
   const { data, error } = await supabase
     .from("seed_accounts")
     .select("id, handle, note, created_at")
+    .eq("status", "approved")
     .order("handle");
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json({ seeds: data });
@@ -165,6 +166,63 @@ admin.post("/seeds", async (req, res: Response) => {
 
 admin.delete("/seeds/:id", async (req, res: Response) => {
   const { error } = await supabase.from("seed_accounts").delete().eq("id", req.params.id);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ ok: true });
+});
+
+// ── Admin: suggested credible accounts (approve / reject) ─────
+// Candidates are the authors of the most-viewed CT posts we collected, minus anyone already decided.
+admin.get("/candidates", async (_req, res: Response) => {
+  const { data: posts, error } = await supabase
+    .from("ct_posts")
+    .select("handle, name, avatar, followers, views, posted_at")
+    .order("views", { ascending: false })
+    .limit(3000);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  const { data: decided } = await supabase.from("seed_accounts").select("handle, status");
+  const counts = { approved: 0, rejected: 0 };
+  const done = new Set<string>();
+  for (const d of decided ?? []) {
+    done.add(d.handle);
+    if (d.status === "rejected") counts.rejected++; else counts.approved++;
+  }
+
+  const byHandle = new Map<string, { handle: string; name: string | null; avatar: string | null; followers: number; posts: number; views: number }>();
+  for (const p of posts ?? []) {
+    const handle = cleanHandle(p.handle ?? "");
+    if (!/^[a-z0-9_]{1,15}$/.test(handle) || done.has(handle)) continue;
+    const c = byHandle.get(handle) ?? { handle, name: p.name ?? null, avatar: p.avatar ?? null, followers: 0, posts: 0, views: 0 };
+    c.posts += 1;
+    c.views += Number(p.views) || 0;
+    c.followers = Math.max(c.followers, Number(p.followers) || 0);
+    c.name = c.name ?? p.name ?? null;
+    c.avatar = c.avatar ?? p.avatar ?? null;
+    byHandle.set(handle, c);
+  }
+  // Accounts with several strong posts and a real audience first.
+  const candidates = [...byHandle.values()]
+    .sort((a, b) => (b.posts * Math.log10(b.views + 10) + Math.log10(b.followers + 10)) - (a.posts * Math.log10(a.views + 10) + Math.log10(a.followers + 10)))
+    .slice(0, 100);
+  res.json({ candidates, approved: counts.approved, rejected: counts.rejected });
+});
+
+// POST /admin/readiness/candidates/decide  { handle, decision: "approved" | "rejected", name?, avatar?, followers? }
+admin.post("/candidates/decide", async (req, res: Response) => {
+  const user = (req as AuthRequest).user;
+  const handle = cleanHandle(req.body.handle ?? "");
+  const decision = req.body.decision;
+  if (!/^[a-z0-9_]{1,15}$/.test(handle) || (decision !== "approved" && decision !== "rejected")) {
+    res.status(400).json({ error: "Invalid handle or decision" }); return;
+  }
+  const { error } = await supabase.from("seed_accounts").upsert({
+    handle,
+    status: decision,
+    name: req.body.name ?? null,
+    avatar: req.body.avatar ?? null,
+    followers: Number.isFinite(Number(req.body.followers)) ? Number(req.body.followers) : null,
+    created_by: user.id,
+    decided_at: new Date().toISOString(),
+  }, { onConflict: "handle" });
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json({ ok: true });
 });

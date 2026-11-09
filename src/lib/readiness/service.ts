@@ -85,7 +85,7 @@ export async function computeAndStoreReadiness(userId: string) {
   const account = await getTwitterAccount(userId);
   if (!account?.username) throw new ReadinessError("not_connected", "No connected X account");
 
-  const { data: seedRows } = await supabase.from("seed_accounts").select("handle");
+  const { data: seedRows } = await supabase.from("seed_accounts").select("handle").eq("status", "approved");
   const seeds = new Set((seedRows ?? []).map((r: { handle: string }) => r.handle));
 
   const now = Date.now();

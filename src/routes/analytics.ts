@@ -249,6 +249,12 @@ router.get("/top-creators", async (_req, res: Response) => {
   res.json({ creators });
 });
 
+// Every topic a post touches; posts that match none sit under "General CT" so each one is reachable.
+const topicsOf = (text: string): string[] => {
+  const found = classifyPost(text);
+  return found.length ? found : ["General CT"];
+};
+
 // GET /analytics/trending — public. What is actually trending on Crypto Twitter: the most-viewed
 // original posts and quotes on CT topics over the last day or two (collected by ctTrendingWorker),
 // the top three, and which topics the views come from. Sorting and the platform filter happen on
@@ -278,7 +284,8 @@ router.get("/trending", async (_req, res: Response) => {
       creator_name: (r.name as string | null) ?? null,
       creator_avatar: (r.avatar as string | null) ?? null,
       handle: r.handle as string,
-      niche: classifyPost(String(r.text ?? ""))[0] ?? null,
+      niche: topicsOf(String(r.text ?? ""))[0] ?? null,
+      topics: topicsOf(String(r.text ?? "")),
       platform: "x",
       views,
       engagement_rate: views > 0 ? Math.round((engagements / views) * 10000) / 100 : 0,
@@ -290,25 +297,32 @@ router.get("/trending", async (_req, res: Response) => {
   // The query already orders by views; keep that, with engagement rate as the tie-break.
   posts.sort((a, b) => b.views - a.views || b.engagement_rate - a.engagement_rate);
 
-  // Share of all views per topic, top five.
-  const viewsByNiche = new Map<string, number>();
-  let nicheTotal = 0;
+  // Every topic with its posts and impressions (a post counts toward each topic it touches), most-viewed first.
+  const byTopic = new Map<string, { posts: number; views: number; sample: { title: string | null; handle: string } | null; sampleViews: number }>();
   for (const p of posts) {
-    if (!p.niche) continue;
-    viewsByNiche.set(p.niche, (viewsByNiche.get(p.niche) ?? 0) + p.views);
-    nicheTotal += p.views;
+    for (const topic of p.topics) {
+      const cur = byTopic.get(topic) ?? { posts: 0, views: 0, sample: null, sampleViews: -1 };
+      cur.posts += 1;
+      cur.views += p.views;
+      if (p.views > cur.sampleViews) { cur.sample = { title: p.title, handle: p.handle }; cur.sampleViews = p.views; }
+      byTopic.set(topic, cur);
+    }
   }
-  const niches = Array.from(viewsByNiche.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([niche, views]) => ({ niche, share: nicheTotal ? Math.round((views / nicheTotal) * 100) : 0 }));
+  const topics = Array.from(byTopic.entries())
+    .sort((a, b) => b[1].views - a[1].views)
+    .map(([topic, v]) => ({ topic, posts: v.posts, views: v.views, sample: v.sample }));
+
+  // Kept for older clients: share of all views per topic, top five.
+  const nicheTotal = topics.reduce((s, x) => s + x.views, 0);
+  const niches = topics.slice(0, 5).map((x) => ({ niche: x.topic, share: nicheTotal ? Math.round((x.views / nicheTotal) * 100) : 0 }));
 
   const updatedAt = rows.reduce<string | null>((latest, r) => (!latest || r.fetched_at > latest ? r.fetched_at : latest), null);
 
   res.json({
     updated_at: updatedAt,
     top: posts.slice(0, 3),
-    posts: posts.slice(0, 100),
+    posts: posts.slice(0, 200),
+    topics,
     niches,
   });
 });

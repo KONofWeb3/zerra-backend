@@ -17,6 +17,52 @@ import { syncXProfile } from "../lib/xProfile";
 const router = Router();
 const REFRESH_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 
+// GET /readiness/leaderboard — public. Zerra creators ranked by their latest Smart Readiness score.
+router.get("/leaderboard", async (_req, res: Response) => {
+  try {
+    const since = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10);
+    const { data: snaps, error } = await supabase
+      .from("readiness_snapshots")
+      .select("user_id, score, followers_total, snapshot_date, components")
+      .gte("snapshot_date", since)
+      .order("snapshot_date", { ascending: false })
+      .limit(5000);
+    if (error) throw new Error(error.message);
+
+    // Latest scored snapshot per creator (older-model rows have no breakdown and are skipped).
+    const latest = new Map<string, { score: number; followers: number }>();
+    for (const s of snaps ?? []) {
+      if (!s.components || latest.has(s.user_id)) continue;
+      latest.set(s.user_id, { score: Number(s.score), followers: Number(s.followers_total) });
+    }
+
+    const ranked = [...latest.entries()].sort((a, b) => b[1].score - a[1].score).slice(0, 100);
+    const ids = ranked.map(([id]) => id);
+    const [{ data: users }, { data: accounts }] = ids.length
+      ? await Promise.all([
+          supabase.from("users").select("id, name, avatar").in("id", ids),
+          supabase.from("social_accounts").select("user_id, username").eq("platform", "twitter").in("user_id", ids),
+        ])
+      : [{ data: [] as any[] }, { data: [] as any[] }];
+    const userById = new Map((users ?? []).map((u: any) => [u.id, u]));
+    const handleById = new Map((accounts ?? []).map((a: any) => [a.user_id, a.username as string | null]));
+
+    res.json({
+      total: latest.size,
+      entries: ranked.map(([id, v], i) => ({
+        rank: i + 1,
+        name: userById.get(id)?.name ?? null,
+        avatar: userById.get(id)?.avatar ?? null,
+        handle: handleById.get(id) ?? null,
+        score: v.score,
+        followers: v.followers,
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /readiness/me
 router.get("/me", requireAuth, async (req, res: Response) => {
   const user = (req as AuthRequest).user;

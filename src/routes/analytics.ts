@@ -249,20 +249,18 @@ router.get("/top-creators", async (_req, res: Response) => {
   res.json({ creators });
 });
 
-// GET /analytics/trending — public. Trending X posts from connected Zerra creators:
-// the top three by engagement, the full ranked list, and which topics the views
-// come from. Everything is computed from stored x_posts; nothing is invented.
-// Sorting and the platform filter happen on the frontend over this one list.
+// GET /analytics/trending — public. What is actually trending on Crypto Twitter: the most-viewed
+// original posts and quotes on CT topics over the last day or two (collected by ctTrendingWorker),
+// the top three, and which topics the views come from. Sorting and the platform filter happen on
+// the frontend over this one list.
 router.get("/trending", async (_req, res: Response) => {
-  const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const since = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
   const { data, error } = await supabase
-    .from("x_posts")
-    .select("post_id, user_id, text, posted_at, likes, replies, retweets, quotes, views, fetched_at, users ( name, avatar )")
+    .from("ct_posts")
+    .select("post_id, text, posted_at, likes, replies, retweets, quotes, views, handle, name, avatar, fetched_at")
     .gte("posted_at", since)
-    // Replies (comments) start with an @mention; keep them off Trending even if saved before the fetch filtered them.
-    .not("text", "like", "@%")
     .order("views", { ascending: false })
-    .limit(300);
+    .limit(200);
 
   if (error) {
     res.status(500).json({ error: error.message });
@@ -270,34 +268,26 @@ router.get("/trending", async (_req, res: Response) => {
   }
 
   const rows = (data ?? []) as any[];
-  const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
-
-  const { data: accountRows } = userIds.length
-    ? await supabase.from("social_accounts").select("user_id, username").eq("platform", "twitter").in("user_id", userIds)
-    : { data: [] as any[] };
-  const handleByUser = new Map((accountRows ?? []).map((a: any) => [a.user_id, a.username as string | null]));
-
   const posts = rows.map((r) => {
     const views = Number(r.views || 0);
     const engagements = Number(r.likes || 0) + Number(r.replies || 0) + Number(r.retweets || 0) + Number(r.quotes || 0);
-    const handle = handleByUser.get(r.user_id) ?? null;
     return {
       id: r.post_id as string,
-      title: String(r.text ?? "").replace(/s+/g, " ").trim().slice(0, 140) || null,
+      title: String(r.text ?? "").replace(/\s+/g, " ").trim().slice(0, 140) || null,
       cover_image_url: null as string | null,
-      creator_name: r.users?.name ?? null,
-      creator_avatar: r.users?.avatar ?? null,
-      handle,
+      creator_name: (r.name as string | null) ?? null,
+      creator_avatar: (r.avatar as string | null) ?? null,
+      handle: r.handle as string,
       niche: classifyPost(String(r.text ?? ""))[0] ?? null,
       platform: "x",
       views,
       engagement_rate: views > 0 ? Math.round((engagements / views) * 10000) / 100 : 0,
       posted_at: r.posted_at as string,
-      url: handle ? `https://x.com/${handle}/status/${r.post_id}` : null,
+      url: `https://x.com/${r.handle}/status/${r.post_id}`,
     };
   });
 
-  // Highest impressions first, with engagement rate as the tie-break.
+  // The query already orders by views; keep that, with engagement rate as the tie-break.
   posts.sort((a, b) => b.views - a.views || b.engagement_rate - a.engagement_rate);
 
   // Share of all views per topic, top five.

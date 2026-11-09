@@ -1,4 +1,4 @@
-import type { FollowerLite, PostLite, XDataProvider } from "./types";
+import type { CtPost, FollowerLite, PostLite, XDataProvider } from "./types";
 
 const BASE = "https://api.twitterapi.io";
 
@@ -50,6 +50,34 @@ async function get(path: string, params: Record<string, string>, key: string) {
 export function twitterApiIoProvider(key: string): XDataProvider {
   return {
     name: "twitterapi.io",
+
+    async searchPosts(query) {
+      const body = await get("/twitter/tweet/advanced_search", { query, queryType: "Top", cursor: "" }, key);
+      const out: CtPost[] = [];
+      for (const t of (body.tweets ?? []) as any[]) {
+        if (!t?.id || !t.createdAt) continue;
+        // Original posts and quote tweets only: no replies, no plain retweets.
+        if (t.isReply || t.inReplyToId || t.retweeted_tweet || /^RT @/.test(String(t.text ?? ""))) continue;
+        const handle = t.author?.userName;
+        if (typeof handle !== "string" || !handle) continue;
+        const followers = Number(t.author?.followers);
+        out.push({
+          id: String(t.id),
+          text: String(t.text ?? ""),
+          createdAt: t.createdAt,
+          likes: Number(t.likeCount ?? 0),
+          replies: Number(t.replyCount ?? 0),
+          retweets: Number(t.retweetCount ?? 0),
+          quotes: Number(t.quoteCount ?? 0),
+          views: Number(t.viewCount ?? 0),
+          handle,
+          name: typeof t.author?.name === "string" ? t.author.name : null,
+          avatar: typeof t.author?.profilePicture === "string" ? t.author.profilePicture : null,
+          followers: Number.isFinite(followers) ? followers : null,
+        });
+      }
+      return out;
+    },
 
     async getUserProfile(username) {
       const body = await get("/twitter/user/info", { userName: username }, key);
@@ -138,6 +166,9 @@ function fakeProvider(): XDataProvider {
   const hash = (s: string) => [...s].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7);
   return {
     name: "fake",
+    async searchPosts() {
+      return [];
+    },
     async getUserProfile() {
       return { name: null, avatarUrl: null, followers: null };
     },

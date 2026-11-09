@@ -19,6 +19,7 @@ import tasksRouter from "./routes/tasks";
 import { startVerificationWorker } from "./jobs/verificationWorker";
 import { startInfluenceScoreWorker } from "./jobs/influenceScoreWorker";
 import { startReadinessWorker } from "./jobs/readinessWorker";
+import { startCtTrendingWorker } from "./jobs/ctTrendingWorker";
 
 dotenv.config();
 
@@ -93,6 +94,8 @@ async function startServer() {
   startInfluenceScoreWorker();
 
   startReadinessWorker();
+
+  startCtTrendingWorker();
 }
 
 startServer();

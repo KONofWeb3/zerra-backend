@@ -36,8 +36,26 @@ export interface RecentPosts {
   avatarUrl: string | null;
 }
 
+/** A post found by searching X (not tied to a Zerra user). */
+export interface CtPost {
+  id: string;
+  text: string;
+  createdAt: string;
+  likes: number;
+  replies: number;
+  retweets: number;
+  quotes: number;
+  views: number;
+  handle: string;
+  name: string | null;
+  avatar: string | null;
+  followers: number | null;
+}
+
 export interface XDataProvider {
   name: string;
+  /** The most popular original posts matching an X search query (Top results, one page). */
+  searchPosts(query: string): Promise<CtPost[]>;
   /** Name, picture and follower count straight from the account's profile (one cheap call). */
   getUserProfile(username: string): Promise<{ name: string | null; avatarUrl: string | null; followers: number | null }>;
   /** Up to `max` followers, newest first where the source orders them. */

@@ -50,12 +50,14 @@ export interface CtPost {
   name: string | null;
   avatar: string | null;
   followers: number | null;
+  kind: "original" | "quote";
+  authorId: string | null;
 }
 
 export interface XDataProvider {
   name: string;
-  /** The most popular original posts matching an X search query (Top results, one page). */
-  searchPosts(query: string): Promise<CtPost[]>;
+  /** The most popular original posts matching an X search query (Top results, up to `pages` pages of 20). */
+  searchPosts(query: string, pages?: number): Promise<CtPost[]>;
   /** Name, picture and follower count straight from the account's profile (one cheap call). */
   getUserProfile(username: string): Promise<{ name: string | null; avatarUrl: string | null; followers: number | null }>;
   /** Up to `max` followers, newest first where the source orders them. */

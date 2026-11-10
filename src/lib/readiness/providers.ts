@@ -51,9 +51,11 @@ export function twitterApiIoProvider(key: string): XDataProvider {
   return {
     name: "twitterapi.io",
 
-    async searchPosts(query) {
-      const body = await get("/twitter/tweet/advanced_search", { query, queryType: "Top", cursor: "" }, key);
+    async searchPosts(query, pages = 1) {
       const out: CtPost[] = [];
+      let cursor = "";
+      for (let page = 0; page < pages; page++) {
+      const body = await get("/twitter/tweet/advanced_search", { query, queryType: "Top", cursor }, key);
       for (const t of (body.tweets ?? []) as any[]) {
         if (!t?.id || !t.createdAt) continue;
         // Original posts and quote tweets only: no replies, no plain retweets.
@@ -74,7 +76,12 @@ export function twitterApiIoProvider(key: string): XDataProvider {
           name: typeof t.author?.name === "string" ? t.author.name : null,
           avatar: typeof t.author?.profilePicture === "string" ? t.author.profilePicture : null,
           followers: Number.isFinite(followers) ? followers : null,
+          kind: t.quoted_tweet ? "quote" : "original",
+          authorId: t.author?.id ? String(t.author.id) : null,
         });
+      }
+      if (!body.has_next_page || !body.next_cursor) break;
+      cursor = String(body.next_cursor);
       }
       return out;
     },

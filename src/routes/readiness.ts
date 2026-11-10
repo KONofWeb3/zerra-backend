@@ -171,14 +171,22 @@ admin.delete("/seeds/:id", async (req, res: Response) => {
 });
 
 // ── Admin: suggested credible accounts (approve / reject) ─────
-// Candidates are the authors of the most-viewed CT posts we collected, minus anyone already decided.
+// Candidates are accounts that keep showing up among the most-viewed CT posts over the last 30 days
+// (several active days, not one viral post), minus anyone already decided. Top 1,000.
 admin.get("/candidates", async (_req, res: Response) => {
-  const { data: posts, error } = await supabase
-    .from("ct_posts")
-    .select("handle, name, avatar, followers, views, posted_at")
-    .order("views", { ascending: false })
-    .limit(3000);
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const posts: any[] = [];
+  for (let from = 0; from < 50000; from += 1000) { // the database returns at most 1,000 rows per request
+    const { data, error } = await supabase
+      .from("ct_posts")
+      .select("handle, name, avatar, followers, views, posted_at")
+      .gte("posted_at", since)
+      .order("posted_at", { ascending: false })
+      .range(from, from + 999);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    posts.push(...(data ?? []));
+    if (!data || data.length < 1000) break;
+  }
   const { data: decided } = await supabase.from("seed_accounts").select("handle, status");
   const counts = { approved: 0, rejected: 0 };
   const done = new Set<string>();
@@ -187,22 +195,24 @@ admin.get("/candidates", async (_req, res: Response) => {
     if (d.status === "rejected") counts.rejected++; else counts.approved++;
   }
 
-  const byHandle = new Map<string, { handle: string; name: string | null; avatar: string | null; followers: number; posts: number; views: number }>();
-  for (const p of posts ?? []) {
+  const byHandle = new Map<string, { handle: string; name: string | null; avatar: string | null; followers: number; posts: number; views: number; days: Set<string> }>();
+  for (const p of posts) {
     const handle = cleanHandle(p.handle ?? "");
     if (!/^[a-z0-9_]{1,15}$/.test(handle) || done.has(handle)) continue;
-    const c = byHandle.get(handle) ?? { handle, name: p.name ?? null, avatar: p.avatar ?? null, followers: 0, posts: 0, views: 0 };
+    const c = byHandle.get(handle) ?? { handle, name: p.name ?? null, avatar: p.avatar ?? null, followers: 0, posts: 0, views: 0, days: new Set<string>() };
     c.posts += 1;
     c.views += Number(p.views) || 0;
     c.followers = Math.max(c.followers, Number(p.followers) || 0);
     c.name = c.name ?? p.name ?? null;
     c.avatar = c.avatar ?? p.avatar ?? null;
+    c.days.add(String(p.posted_at).slice(0, 10));
     byHandle.set(handle, c);
   }
-  // Accounts with several strong posts and a real audience first.
+  // Consistency first (most distinct days with a top post), then total reach.
   const candidates = [...byHandle.values()]
-    .sort((a, b) => (b.posts * Math.log10(b.views + 10) + Math.log10(b.followers + 10)) - (a.posts * Math.log10(a.views + 10) + Math.log10(a.followers + 10)))
-    .slice(0, 100);
+    .sort((a, b) => b.days.size - a.days.size || b.views - a.views)
+    .slice(0, 1000)
+    .map(({ days, ...c }) => ({ ...c, days: days.size }));
   res.json({ candidates, approved: counts.approved, rejected: counts.rejected });
 });
 

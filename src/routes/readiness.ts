@@ -142,14 +142,47 @@ admin.use(requireAuth, requireAdmin);
 
 const cleanHandle = (h: string) => String(h).trim().replace(/^@/, "").toLowerCase();
 
+let backfilling = false;
+/** Fill in name, picture and followers for approved accounts that were added as bare handles. */
+async function backfillSeedProfiles(handles: string[]) {
+  if (backfilling || handles.length === 0) return;
+  backfilling = true;
+  try {
+    const provider = getProvider();
+    for (const handle of handles.slice(0, 60)) {
+      try {
+        const p = await provider?.getUserProfile(handle);
+        if (!p || (!p.name && !p.avatarUrl && p.followers === null)) continue;
+        await supabase.from("seed_accounts").update({ name: p.name, avatar: p.avatarUrl, followers: p.followers }).eq("handle", handle);
+      } catch (err: any) {
+        console.error("seed profile backfill failed for", handle, err.message);
+      }
+    }
+  } finally {
+    backfilling = false;
+  }
+}
+
 admin.get("/seeds", async (_req, res: Response) => {
-  const { data, error } = await supabase
-    .from("seed_accounts")
-    .select("id, handle, note, created_at")
-    .eq("status", "approved")
-    .order("handle");
+  const cols = "id, handle, note, created_at, name, avatar, followers";
+  const { data, error } = await supabase.from("seed_accounts").select(cols).eq("status", "approved").order("handle");
   if (error) { res.status(500).json({ error: error.message }); return; }
-  res.json({ seeds: data });
+  let seeds = data ?? [];
+
+  // Reuse what the CT collector already knows, then fetch the rest in the background.
+  const missing = seeds.filter((s: any) => !s.avatar && !s.name);
+  if (missing.length) {
+    const { data: known } = await supabase
+      .from("ct_accounts").select("handle, name, avatar, followers").in("handle", missing.map((s: any) => s.handle));
+    for (const k of known ?? []) {
+      if (!k.name && !k.avatar) continue;
+      await supabase.from("seed_accounts").update({ name: k.name, avatar: k.avatar, followers: k.followers }).eq("handle", k.handle);
+      const row: any = seeds.find((s: any) => s.handle === k.handle);
+      if (row) { row.name = k.name; row.avatar = k.avatar; row.followers = k.followers; }
+    }
+    void backfillSeedProfiles(seeds.filter((s: any) => !s.avatar && !s.name).map((s: any) => s.handle));
+  }
+  res.json({ seeds });
 });
 
 // POST /admin/readiness/seeds  { handles: string[] } or { handle: string }, optional note
@@ -192,15 +225,35 @@ admin.get("/user-search", async (req, res: Response) => {
   const hit = searchCache.get(key);
   if (hit && Date.now() - hit.at < 10 * 60 * 1000) { res.json({ users: hit.users }); return; }
   const provider = getProvider();
-  if (!provider) { res.json({ users: [] }); return; }
+  if (!provider) { res.status(503).json({ error: "No X data source is configured (TWITTERAPI_IO_KEY)" }); return; }
+
+  let users: { handle: string; name: string | null; avatar: string | null; followers: number | null; verified: boolean }[] = [];
+  let searchError: string | null = null;
   try {
-    const users = (await provider.searchUsers(q)).slice(0, 8);
-    if (searchCache.size > 500) searchCache.clear();
-    searchCache.set(key, { at: Date.now(), users });
-    res.json({ users });
+    users = await provider.searchUsers(q);
   } catch (err: any) {
-    res.status(502).json({ error: err.message ?? "Search failed" });
+    searchError = err.message ?? "Search failed";
+    console.error("user search failed:", searchError);
   }
+
+  // An exact handle should always be findable, even when the keyword search misses it.
+  if (/^[A-Za-z0-9_]{1,15}$/.test(q) && !users.some((u) => u.handle.toLowerCase() === key)) {
+    try {
+      const p = await provider.getUserProfile(q);
+      if (p.name || p.avatarUrl || p.followers !== null) {
+        users.unshift({ handle: q, name: p.name, avatar: p.avatarUrl, followers: p.followers, verified: false });
+      }
+    } catch (err: any) {
+      console.error("exact handle lookup failed:", err.message);
+      searchError = searchError ?? err.message ?? "Lookup failed";
+    }
+  }
+
+  if (users.length === 0 && searchError) { res.status(502).json({ error: searchError }); return; }
+  users = users.slice(0, 8);
+  if (searchCache.size > 500) searchCache.clear();
+  searchCache.set(key, { at: Date.now(), users });
+  res.json({ users });
 });
 
 // ── Admin: CT discovery list (review queue) ───────────────────

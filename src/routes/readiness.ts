@@ -216,44 +216,72 @@ admin.delete("/seeds/:id", async (req, res: Response) => {
   res.json({ ok: true });
 });
 
-// GET /admin/readiness/user-search?q=wale : X accounts matching what is being typed (cached for 10 minutes)
-const searchCache = new Map<string, { at: number; users: unknown[] }>();
+// GET /admin/readiness/user-search?q=wale : accounts matching what is being typed.
+// Accounts we already know (the CT discovery list and approved seeds) come first and cost nothing; then the
+// live X user search (when the data provider allows it); then an exact-handle lookup. Cached for 10 minutes.
+type Suggestion = { handle: string; name: string | null; avatar: string | null; followers: number | null; verified: boolean };
+const searchCache = new Map<string, { at: number; body: { users: Suggestion[]; note?: string } }>();
+let liveSearchOffUntil = 0; // after the provider refuses the live search (e.g. 402), stop asking for a while
+let liveSearchNote = "";
+
 admin.get("/user-search", async (req, res: Response) => {
-  const q = String(req.query.q ?? "").trim().replace(/^@/, "").slice(0, 50);
+  const q = String(req.query.q ?? "").trim().replace(/^@/, "").replace(/[^A-Za-z0-9_ .-]/g, "").slice(0, 50);
   if (q.length < 2) { res.json({ users: [] }); return; }
   const key = q.toLowerCase();
   const hit = searchCache.get(key);
-  if (hit && Date.now() - hit.at < 10 * 60 * 1000) { res.json({ users: hit.users }); return; }
-  const provider = getProvider();
-  if (!provider) { res.status(503).json({ error: "No X data source is configured (TWITTERAPI_IO_KEY)" }); return; }
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) { res.json(hit.body); return; }
 
-  let users: { handle: string; name: string | null; avatar: string | null; followers: number | null; verified: boolean }[] = [];
-  let searchError: string | null = null;
-  try {
-    users = await provider.searchUsers(q);
-  } catch (err: any) {
-    searchError = err.message ?? "Search failed";
-    console.error("user search failed:", searchError);
+  const found = new Map<string, Suggestion>();
+  const put = (u: Suggestion) => { const k = u.handle.toLowerCase(); if (!found.has(k)) found.set(k, u); };
+
+  // 1. accounts we already know
+  const like = "%" + key.trim().replace(/\s+/g, "%") + "%";
+  const [ct, seeds] = await Promise.all([
+    supabase.from("ct_accounts").select("handle, name, avatar, followers").or(`handle.ilike.${like},name.ilike.${like}`).order("followers", { ascending: false }).limit(8),
+    supabase.from("seed_accounts").select("handle, name, avatar, followers").or(`handle.ilike.${like},name.ilike.${like}`).limit(8),
+  ]);
+  for (const r of [...(seeds.data ?? []), ...(ct.data ?? [])] as any[]) {
+    put({ handle: r.handle, name: r.name ?? null, avatar: r.avatar ?? null, followers: r.followers ?? null, verified: false });
   }
 
-  // An exact handle should always be findable, even when the keyword search misses it.
-  if (/^[A-Za-z0-9_]{1,15}$/.test(q) && !users.some((u) => u.handle.toLowerCase() === key)) {
+  // 2. live X search
+  const provider = getProvider();
+  let note: string | undefined;
+  if (!provider) {
+    note = "No live X search is configured, showing accounts we already know.";
+  } else if (Date.now() < liveSearchOffUntil) {
+    note = liveSearchNote;
+  } else {
     try {
-      const p = await provider.getUserProfile(q);
-      if (p.name || p.avatarUrl || p.followers !== null) {
-        users.unshift({ handle: q, name: p.name, avatar: p.avatarUrl, followers: p.followers, verified: false });
-      }
+      for (const u of await provider.searchUsers(q)) put(u);
     } catch (err: any) {
-      console.error("exact handle lookup failed:", err.message);
-      searchError = searchError ?? err.message ?? "Lookup failed";
+      console.error("user search failed:", err.message);
+      const paymentIssue = /\b402\b/.test(err.message ?? "");
+      liveSearchNote = paymentIssue
+        ? "Live X search isn't available on the current TwitterAPI.io plan (402), so this shows accounts we already know. Type a full handle to look it up directly."
+        : `Live X search failed (${err.message}). Showing accounts we already know.`;
+      liveSearchOffUntil = Date.now() + (paymentIssue ? 30 : 2) * 60 * 1000;
+      note = liveSearchNote;
     }
   }
 
-  if (users.length === 0 && searchError) { res.status(502).json({ error: searchError }); return; }
-  users = users.slice(0, 8);
+  // 3. an exact handle should always be findable
+  if (provider && /^[A-Za-z0-9_]{1,15}$/.test(q) && !found.has(key)) {
+    try {
+      const p = await provider.getUserProfile(q);
+      if (p.name || p.avatarUrl || p.followers !== null) put({ handle: q, name: p.name, avatar: p.avatarUrl, followers: p.followers, verified: false });
+    } catch (err: any) {
+      console.error("exact handle lookup failed:", err.message);
+    }
+  }
+
+  const users = [...found.values()]
+    .sort((x, y) => Number(y.handle.toLowerCase().startsWith(key)) - Number(x.handle.toLowerCase().startsWith(key)) || (y.followers ?? 0) - (x.followers ?? 0))
+    .slice(0, 8);
+  const body = note ? { users, note } : { users };
   if (searchCache.size > 500) searchCache.clear();
-  searchCache.set(key, { at: Date.now(), users });
-  res.json({ users });
+  searchCache.set(key, { at: Date.now(), body });
+  res.json(body);
 });
 
 // ── Admin: CT discovery list (review queue) ───────────────────

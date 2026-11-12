@@ -54,10 +54,24 @@ export interface CtPost {
   authorId: string | null;
 }
 
+/** One of an account's own tweets, with what is needed to tell replies, threads, articles and posts apart. */
+export interface ActivityTweet {
+  id: string;
+  createdAt: string;
+  text: string;
+  isReply: boolean;
+  inReplyToId: string | null;
+  inReplyToUsername: string | null;
+  isRetweet: boolean;
+  isArticle: boolean;
+}
+
 export interface XDataProvider {
   name: string;
   /** The most popular original posts matching an X search query (Top results, up to `pages` pages of 20). */
   searchPosts(query: string, pages?: number): Promise<CtPost[]>;
+  /** The account's own tweets (including replies) newer than `sinceMs`, newest first. */
+  getActivity(username: string, sinceMs: number): Promise<ActivityTweet[]>;
   /** Accounts matching a name or handle (for type-ahead suggestions). */
   searchUsers(query: string): Promise<{ handle: string; name: string | null; avatar: string | null; followers: number | null; verified: boolean }[]>;
   /** Name, picture and follower count straight from the account's profile (one cheap call). */

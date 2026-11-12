@@ -1,4 +1,4 @@
-import type { CtPost, FollowerLite, PostLite, XDataProvider } from "./types";
+import type { ActivityTweet, CtPost, FollowerLite, PostLite, XDataProvider } from "./types";
 
 const BASE = "https://api.twitterapi.io";
 
@@ -139,6 +139,38 @@ export function twitterApiIoProvider(key: string): XDataProvider {
       return out.slice(0, max);
     },
 
+    async getActivity(username, sinceMs) {
+      const out: ActivityTweet[] = [];
+      let cursor = "";
+      for (let page = 0; page < 8; page++) {
+        const body = await get("/twitter/user/last_tweets", { userName: username, cursor, includeReplies: "true" }, key);
+        let reachedOld = false;
+        for (const t of (body.data?.tweets ?? []) as any[]) {
+          if (!t?.id || !t.createdAt) continue;
+          const at = new Date(t.createdAt).getTime();
+          if (Number.isNaN(at)) continue;
+          if (at < sinceMs) { reachedOld = true; continue; }
+          const text = String(t.text ?? "");
+          out.push({
+            id: String(t.id),
+            createdAt: new Date(at).toISOString(),
+            text,
+            isReply: Boolean(t.isReply || t.inReplyToId),
+            inReplyToId: t.inReplyToId ? String(t.inReplyToId) : null,
+            inReplyToUsername: typeof t.inReplyToUsername === "string" ? t.inReplyToUsername : null,
+            isRetweet: Boolean(t.retweeted_tweet) || /^RT @/.test(text),
+            // X Articles: an explicit article object, or a link to one.
+            isArticle: Boolean(t.article) || /(?:x|twitter)\.com\/i\/article\//i.test(text + " " + JSON.stringify(t.entities?.urls ?? "")),
+          });
+        }
+        // Pinned tweets can be old and out of order, so only stop once a whole page is old.
+        if (reachedOld && (body.data?.tweets ?? []).every((t: any) => new Date(t.createdAt).getTime() < sinceMs)) break;
+        if (!body.has_next_page || !body.next_cursor) break;
+        cursor = body.next_cursor;
+      }
+      return out;
+    },
+
     async getRecentPosts(username, sinceMs) {
       const out: PostLite[] = [];
       let followers: number | null = null;
@@ -194,6 +226,9 @@ function fakeProvider(): XDataProvider {
       return [];
     },
     async searchUsers() {
+      return [];
+    },
+    async getActivity() {
       return [];
     },
     async getUserProfile() {

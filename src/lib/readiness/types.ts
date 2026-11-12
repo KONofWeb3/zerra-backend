@@ -58,6 +58,8 @@ export interface XDataProvider {
   name: string;
   /** The most popular original posts matching an X search query (Top results, up to `pages` pages of 20). */
   searchPosts(query: string, pages?: number): Promise<CtPost[]>;
+  /** Accounts matching a name or handle (for type-ahead suggestions). */
+  searchUsers(query: string): Promise<{ handle: string; name: string | null; avatar: string | null; followers: number | null; verified: boolean }[]>;
   /** Name, picture and follower count straight from the account's profile (one cheap call). */
   getUserProfile(username: string): Promise<{ name: string | null; avatarUrl: string | null; followers: number | null }>;
   /** Up to `max` followers, newest first where the source orders them. */

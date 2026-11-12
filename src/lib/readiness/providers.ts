@@ -86,6 +86,23 @@ export function twitterApiIoProvider(key: string): XDataProvider {
       return out;
     },
 
+    async searchUsers(query) {
+      const body = await get("/twitter/user/search", { query, cursor: "" }, key);
+      return ((body.users ?? []) as any[]).flatMap((u) => {
+        const handle = u?.screen_name ?? u?.userName ?? u?.username;
+        if (typeof handle !== "string" || !handle) return [];
+        const followers = Number(u.followers_count);
+        const pic = u.profile_image_url_https ?? u.profilePicture;
+        return [{
+          handle,
+          name: typeof u.name === "string" && u.name.trim() ? u.name.trim() : null,
+          avatar: typeof pic === "string" && pic.startsWith("http") ? pic : null,
+          followers: Number.isFinite(followers) ? followers : null,
+          verified: Boolean(u.isBlueVerified || u.verified),
+        }];
+      });
+    },
+
     async getUserProfile(username) {
       const body = await get("/twitter/user/info", { userName: username }, key);
       const d = body.data ?? {};
@@ -174,6 +191,9 @@ function fakeProvider(): XDataProvider {
   return {
     name: "fake",
     async searchPosts() {
+      return [];
+    },
+    async searchUsers() {
       return [];
     },
     async getUserProfile() {

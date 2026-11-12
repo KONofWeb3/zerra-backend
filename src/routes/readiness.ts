@@ -158,9 +158,22 @@ admin.post("/seeds", async (req, res: Response) => {
   const raw: string[] = Array.isArray(req.body.handles) ? req.body.handles : req.body.handle ? [req.body.handle] : [];
   const handles = [...new Set(raw.map(cleanHandle).filter((h) => /^[a-z0-9_]{1,15}$/.test(h)))];
   if (handles.length === 0) { res.status(400).json({ error: "No valid handles" }); return; }
-  const rows = handles.map((handle) => ({ handle, note: req.body.note ?? null, created_by: user.id }));
-  const { error } = await supabase.from("seed_accounts").upsert(rows, { onConflict: "handle", ignoreDuplicates: true });
+  // A handle added by hand is approved, even if it was rejected before. Profile details come from the type-ahead search.
+  const single = handles.length === 1;
+  const followers = Number(req.body.followers);
+  const rows = handles.map((handle) => ({
+    handle,
+    note: req.body.note ?? null,
+    status: "approved",
+    name: single && typeof req.body.name === "string" ? req.body.name : null,
+    avatar: single && typeof req.body.avatar === "string" ? req.body.avatar : null,
+    followers: single && Number.isFinite(followers) ? followers : null,
+    created_by: user.id,
+    decided_at: new Date().toISOString(),
+  }));
+  const { error } = await supabase.from("seed_accounts").upsert(rows, { onConflict: "handle" });
   if (error) { res.status(500).json({ error: error.message }); return; }
+  await supabase.from("ct_accounts").update({ status: "approved" }).in("handle", handles); // keep the discovery list in step
   res.json({ added: handles.length });
 });
 
@@ -168,6 +181,26 @@ admin.delete("/seeds/:id", async (req, res: Response) => {
   const { error } = await supabase.from("seed_accounts").delete().eq("id", req.params.id);
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json({ ok: true });
+});
+
+// GET /admin/readiness/user-search?q=wale : X accounts matching what is being typed (cached for 10 minutes)
+const searchCache = new Map<string, { at: number; users: unknown[] }>();
+admin.get("/user-search", async (req, res: Response) => {
+  const q = String(req.query.q ?? "").trim().replace(/^@/, "").slice(0, 50);
+  if (q.length < 2) { res.json({ users: [] }); return; }
+  const key = q.toLowerCase();
+  const hit = searchCache.get(key);
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) { res.json({ users: hit.users }); return; }
+  const provider = getProvider();
+  if (!provider) { res.json({ users: [] }); return; }
+  try {
+    const users = (await provider.searchUsers(q)).slice(0, 8);
+    if (searchCache.size > 500) searchCache.clear();
+    searchCache.set(key, { at: Date.now(), users });
+    res.json({ users });
+  } catch (err: any) {
+    res.status(502).json({ error: err.message ?? "Search failed" });
+  }
 });
 
 // ── Admin: CT discovery list (review queue) ───────────────────

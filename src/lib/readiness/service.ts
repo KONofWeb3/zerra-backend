@@ -4,6 +4,7 @@ import {
   ALGO_VERSION, STRONG_THRESHOLD, followerQuality, median, scoreReadiness,
 } from "./score";
 import { nicheVoices } from "./niches";
+import { audienceFromBios } from "../intelligence/audience";
 import { syncXProfile } from "../xProfile";
 import type { PostLite } from "./types";
 
@@ -233,6 +234,7 @@ export async function computeAndStoreReadiness(userId: string) {
       erTrend,
       followerGrowth,
       gate: result.gate,
+      audience: audienceFromBios(sample.map((f) => f.bio ?? "")),
     },
     niches: voices,
   };

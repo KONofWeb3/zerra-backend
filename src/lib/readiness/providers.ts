@@ -130,6 +130,7 @@ export function twitterApiIoProvider(key: string): XDataProvider {
             statuses: Number(f.statuses_count ?? 0),
             likes: Number(f.favourites_count ?? 0),
             hasBio: Boolean(String(f.description ?? "").trim()),
+            bio: String(f.description ?? "").trim().slice(0, 300),
             verified: Boolean(f.isBlueVerified || f.verified),
           });
         }

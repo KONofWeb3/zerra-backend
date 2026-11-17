@@ -12,6 +12,8 @@ export interface FollowerLite {
   /** Likes the account has given: a cheap "is this a real, active human" signal. */
   likes: number;
   hasBio: boolean;
+  /** The follower's bio text (trimmed), used to estimate the audience's interests. */
+  bio?: string;
   verified: boolean;
 }
 

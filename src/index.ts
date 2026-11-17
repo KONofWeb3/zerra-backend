@@ -16,6 +16,7 @@ import creatorsRouter from "./routes/creators";
 import walletRouter from "./routes/wallet";
 import readinessRouter, { readinessAdminRouter } from "./routes/readiness";
 import tasksRouter from "./routes/tasks";
+import intelligenceRouter from "./routes/intelligence";
 import { startVerificationWorker } from "./jobs/verificationWorker";
 import { startInfluenceScoreWorker } from "./jobs/influenceScoreWorker";
 import { startReadinessWorker } from "./jobs/readinessWorker";
@@ -73,6 +74,7 @@ app.use("/creators", creatorsRouter);
 app.use("/wallet", walletRouter);
 app.use("/readiness", readinessRouter);
 app.use("/tasks", tasksRouter);
+app.use("/intelligence", intelligenceRouter);
 app.use("/admin/readiness", readinessAdminRouter);
 
 async function startServer() {
